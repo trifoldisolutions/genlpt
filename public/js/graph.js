@@ -15,10 +15,12 @@ const LAYOUT = {
   padding: 30,
 };
 
-const FONT = '"Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif';
-// Type scale shared with the CSS theme: 15px base, ratio 1.2.
-const TEXT_SM = 15 / 1.2; // 12.5
-const TEXT_XS = 15 / 1.44; // ~10.4
+const FONT = '"SUSE", ui-sans-serif, system-ui, sans-serif';
+// Type scale shared with the CSS theme (--type-base / --type-ratio in src/input.css).
+const TYPE_BASE = 14;
+const TYPE_RATIO = 1.2;
+const TEXT_SM = TYPE_BASE / TYPE_RATIO; // ~11.7
+const TEXT_XS = TYPE_BASE / TYPE_RATIO ** 2; // ~9.7
 const INK = {
   canvas: '#fafafa', // zinc-50
   edge: '#d4d4d8', // zinc-300
@@ -111,7 +113,7 @@ function style() {
   ];
 }
 
-// Resolves once Be Vietnam Pro is usable on canvas, so label widths are measured correctly.
+// Resolves once the UI font is usable on canvas, so label widths are measured correctly.
 function fontsLoaded() {
   if (!document.fonts) return Promise.resolve();
   return Promise.all([

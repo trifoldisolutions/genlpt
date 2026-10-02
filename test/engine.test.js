@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeLetters, initials, cleanWordList } = require('../services/acronym/normalize');
+const { normalizeLetters, initials, cleanWordList, cleanTitle } = require('../services/acronym/normalize');
 const { buildPool, groupPool, coverWord, generateEngineCandidates, candidateFromIds, pronounceability } = require('../services/acronym/engine');
 
 const w = (id, branch, text) => ({ _id: id, branch, text });
@@ -13,9 +13,29 @@ test('normalization strips accents and keeps A–Z', () => {
   assert.equal(normalizeLetters('Œuvre'), 'OEUVRE');
 });
 
+test('initials skip leading connectors; a connector never gives the letter', () => {
+  assert.equal(initials("L'Équipe").one, 'E');
+  assert.equal(initials('La Tribu').one, 'T');
+  assert.equal(initials('The Hub', 'en').one, 'H');
+  assert.equal(initials('Pour', 'fr').one, null);
+  assert.equal(initials('Pour', 'en').one, 'P'); // an English verb, not a connector
+  assert.equal(initials('Sûr').one, 'S'); // "sûr" is not "sur"
+  assert.deepEqual(buildPool([w('a', 'who', 'De'), w('b', 'who', 'Des Liens')]).map((p) => p.one), ['L']);
+});
+
 test('cleanWordList dedupes case/accent-insensitively and drops junk', () => {
   const out = cleanWordList(['équipe', 'Equipe', '  ', 'x'.repeat(61), 'Brigade', 42], new Set(['brigade']));
   assert.deepEqual(out, ['Équipe']);
+  assert.deepEqual(cleanWordList(['Wear_down', 'Local_AI']), ['Wear down', 'Local AI']);
+});
+
+test('cleanTitle keeps at most 5 words and never ends on a connector or punctuation', () => {
+  assert.equal(cleanTitle('« brigade d’entraide scolaire ».'), 'Brigade d’entraide scolaire');
+  assert.equal(cleanTitle('Brigade de soutien scolaire pour les familles'), 'Brigade de soutien scolaire');
+  assert.equal(cleanTitle('"Neighborhood Tutoring Crew!"', 'en'), 'Neighborhood Tutoring Crew');
+  assert.equal(cleanTitle('Tools for the', 'en'), 'Tools');
+  assert.equal(cleanTitle('  …  '), '');
+  assert.equal(cleanTitle(42), '');
 });
 
 test('coverage: a word cannot be reused', () => {
@@ -104,6 +124,14 @@ test('maxPerBranch: LLM ids from the same branch are rejected', () => {
   ]);
   assert.equal(candidateFromIds(['w1', 'w2', 'w3'], idMap, { maxPerBranch: 1 }), null);
   assert.ok(candidateFromIds(['w1', 'w2', 'w3'], idMap, { maxPerBranch: 2 }));
+});
+
+test('the same word from two branches is used once per acronym', () => {
+  const words = [w('l1', 'who', 'Lien'), w('o', 'what', 'Outil'), w('l2', 'how', 'Lien'), w('r', 'why', 'Rappel')];
+  const out = generateEngineCandidates({ words, dictionary: ['LOL', 'LOR'], minLength: 3, maxLength: 3 });
+  assert.deepEqual(out.map((c) => c.letters), ['LOR']);
+  const idMap = new Map(words.map((x, i) => [`w${i + 1}`, x]));
+  assert.equal(candidateFromIds(['w1', 'w2', 'w3'], idMap), null);
 });
 
 test('pronounceability favours alternation', () => {

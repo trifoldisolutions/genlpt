@@ -1,9 +1,12 @@
-require('dotenv').config();
+// override: .env wins over inherited env (e.g. a stale PORT injected into VS
+// Code terminals), so the port always follows project-ports.json.
+require('dotenv').config({ override: true });
 
 const path = require('path');
 const express = require('express');
 const mongoose = require('mongoose');
 const brand = require('./config/brand');
+const limits = require('./config/limits');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -11,11 +14,20 @@ const PORT = process.env.PORT || 3008;
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.appName = brand.appName;
+app.locals.brand = brand;
+app.locals.limits = limits;
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor/cytoscape', express.static(path.join(__dirname, 'node_modules/cytoscape/dist')));
+
+// Signed-in user for views ({ name, email } or null). Placeholder until auth
+// is wired up: set req.user in the auth middleware and everything follows.
+app.use((req, res, next) => {
+  res.locals.user = req.user || null;
+  next();
+});
 
 // Facades
 const facades = [

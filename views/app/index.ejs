@@ -4,8 +4,11 @@
   <!-- Sidebar: sessions (off-canvas drawer below lg) -->
   <div id="drawer-backdrop" hidden class="fixed inset-0 z-40 bg-zinc-900/30 lg:hidden"></div>
   <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] -translate-x-full flex-col border-r border-zinc-200 bg-white transition-transform lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 lg:transition-none" aria-labelledby="sessions-heading">
-    <div class="flex items-center justify-between gap-2 px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
-      <span class="px-1 text-lg font-bold tracking-tight"><%= appName %></span>
+    <div class="flex items-start justify-between gap-2 px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <div class="min-w-0 px-1 pt-1">
+        <span class="block text-lg font-bold leading-tight tracking-tight"><%= appName %></span>
+        <a href="<%= brand.company.url %>" target="_blank" rel="noopener" class="block truncate text-xs text-zinc-400 hover:text-cerise-600 hover:underline">by <%= brand.company.name %></a>
+      </div>
       <button type="button" id="drawer-close" class="icon-btn lg:hidden" data-i18n-aria="closeSessions" data-i18n-title="closeSessions">
         <iconify-icon icon="boxicons:x" width="20" height="20" aria-hidden="true"></iconify-icon>
       </button>
@@ -20,14 +23,39 @@
       </button>
     </div>
     <ul id="session-list" class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-4"></ul>
-    <!-- Account row: user (left), app settings (right). Placeholders until accounts exist. -->
+    <!-- Account row: user (left), app settings (right). Guests get a link to the login page; users get a profile popup. -->
     <div class="flex items-center gap-1 border-t border-zinc-200 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
-      <button type="button" id="account-btn" class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100" data-i18n-aria="account" data-i18n-title="account">
+      <% if (user) { %>
+      <div class="relative min-w-0 flex-1">
+        <button type="button" id="account-btn" class="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100" aria-haspopup="true" aria-expanded="false" aria-controls="account-menu" data-i18n-aria="account" data-i18n-title="account">
+          <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-base font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
+          <span class="truncate text-base font-medium text-zinc-800"><%= user.name || user.email %></span>
+        </button>
+        <div id="account-menu" hidden class="absolute bottom-full left-0 z-10 mb-1 w-full min-w-56 rounded-md border border-zinc-200 bg-white p-1.5 shadow-lg">
+          <div class="flex items-center gap-2.5 px-2 py-2">
+            <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-lg font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
+            <div class="min-w-0">
+              <span class="block truncate text-base font-semibold text-zinc-900"><%= user.name || user.email %></span>
+              <% if (user.name && user.email) { %><span class="block truncate text-sm text-zinc-500"><%= user.email %></span><% } %>
+            </div>
+          </div>
+          <div class="my-1 border-t border-zinc-100"></div>
+          <form method="post" action="/app/logout">
+            <button type="submit" class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-base text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900">
+              <iconify-icon icon="boxicons:arrow-out-right-square-half" width="18" height="18" aria-hidden="true"></iconify-icon>
+              <span data-i18n="logOut">Log out</span>
+            </button>
+          </form>
+        </div>
+      </div>
+      <% } else { %>
+      <a href="/app/login" id="account-login" class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-100" data-i18n-title="logIn">
         <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-base font-semibold text-cerise-700" aria-hidden="true">
           <iconify-icon icon="boxicons:user" width="18" height="18"></iconify-icon>
         </span>
         <span class="truncate text-base font-medium text-zinc-800" data-i18n="guest">Guest</span>
-      </button>
+      </a>
+      <% } %>
       <button type="button" id="app-settings-btn" class="icon-btn" data-i18n-aria="settings" data-i18n-title="settings">
         <iconify-icon icon="boxicons:cog" width="20" height="20" aria-hidden="true"></iconify-icon>
       </button>
@@ -101,43 +129,48 @@
         <span class="h-1 w-10 rounded-full bg-zinc-300" aria-hidden="true"></span>
       </button>
 
-      <header class="flex shrink-0 items-center gap-1 px-2 pb-2 lg:py-2">
-        <div id="session-bar" hidden class="flex min-w-0 flex-1 items-center gap-1">
-          <input id="title" type="text" maxlength="120" data-i18n-aria="titleLabel" class="min-w-0 flex-1 truncate rounded-md bg-transparent px-2 py-1.5 text-lg font-semibold text-zinc-900 placeholder:font-medium placeholder:text-zinc-400 hover:bg-zinc-100 focus:bg-white">
-          <span id="save-status" class="wf-hide-min shrink-0 text-sm text-zinc-400" aria-live="polite"></span>
-          <button type="button" id="peek-action" class="icon-btn bg-cerise-600 text-white enabled:hover:bg-cerise-700 lg:hidden"></button>
-          <div class="wf-hide-min relative">
-            <button type="button" id="settings-btn" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-controls="settings" data-i18n-aria="settings" data-i18n-title="settings">
-              <iconify-icon icon="boxicons:cog" width="20" height="20" aria-hidden="true"></iconify-icon>
-            </button>
-            <div id="settings" hidden class="absolute right-0 top-full z-10 mt-1 w-64 max-w-[calc(100vw-2rem)] space-y-3 rounded-md border border-zinc-200 bg-white p-3 shadow-lg">
-              <label class="block">
-                <span class="label" data-i18n="language">Language</span>
-                <select id="language" class="field mt-1">
-                  <option value="fr">Français</option>
-                  <option value="en">English</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="label" data-i18n="model">Model</span>
-                <select id="model" class="field mt-1 truncate"></select>
-              </label>
-            </div>
-          </div>
+      <header class="shrink-0 px-2 pb-2 lg:py-2">
+        <!-- Session language + model, right above the title -->
+        <div id="session-meta" hidden class="wf-hide-min flex min-w-0 items-center gap-1.5 pb-1">
+          <select id="language" class="meta-select w-auto shrink-0" data-i18n-aria="language" data-i18n-title="language">
+            <option value="fr" data-i18n="lang_fr">French</option>
+            <option value="en" data-i18n="lang_en">English</option>
+          </select>
+          <select id="model" class="meta-select min-w-0 flex-1 truncate" data-i18n-aria="model" data-i18n-title="model"></select>
         </div>
-        <p id="no-session" class="min-w-0 flex-1 truncate px-2 text-base font-medium text-zinc-500" data-i18n="noSession"></p>
-        <button type="button" id="wf-min" class="icon-btn max-lg:hidden" aria-expanded="true" aria-controls="workflow-body">
-          <iconify-icon icon="boxicons:chevrons-up" width="20" height="20" aria-hidden="true"></iconify-icon>
-        </button>
+        <div class="flex items-center gap-1">
+          <div id="session-bar" hidden class="flex min-w-0 flex-1 items-center gap-1">
+            <input id="title" type="text" maxlength="120" data-i18n-aria="titleLabel" class="min-w-0 flex-1 truncate rounded-md bg-transparent px-2 py-1.5 text-lg font-semibold text-zinc-900 placeholder:font-medium placeholder:text-zinc-400 hover:bg-zinc-100 focus:bg-white">
+            <span id="save-status" class="wf-hide-min shrink-0 text-sm text-zinc-400" aria-live="polite"></span>
+            <button type="button" id="peek-action" class="icon-btn bg-cerise-600 text-white enabled:hover:bg-cerise-700 lg:hidden"></button>
+          </div>
+          <p id="no-session" class="min-w-0 flex-1 truncate px-2 text-base font-medium text-zinc-500" data-i18n="noSession"></p>
+          <button type="button" id="wf-min" class="icon-btn max-lg:hidden" aria-expanded="true" aria-controls="workflow-body">
+            <iconify-icon icon="boxicons:chevrons-up" width="20" height="20" aria-hidden="true"></iconify-icon>
+          </button>
+        </div>
       </header>
 
-      <nav id="steps" hidden role="tablist" data-i18n-aria="steps" class="mx-3 mb-3 grid shrink-0 grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1">
-        <button type="button" role="tab" id="tab-describe" data-step="describe" aria-controls="step-describe" aria-selected="true" class="rounded-sm px-2 py-1.5 text-base font-medium text-zinc-600 hover:text-zinc-900 aria-selected:bg-white aria-selected:text-zinc-900 aria-selected:shadow-sm pointer-coarse:py-2.5" data-i18n="step1"></button>
-        <button type="button" role="tab" id="tab-explore" data-step="explore" aria-controls="step-explore" aria-selected="false" tabindex="-1" class="rounded-sm px-2 py-1.5 text-base font-medium text-zinc-600 hover:text-zinc-900 aria-selected:bg-white aria-selected:text-zinc-900 aria-selected:shadow-sm pointer-coarse:py-2.5" data-i18n="step2"></button>
-        <button type="button" role="tab" id="tab-acronyms" data-step="acronyms" aria-controls="step-acronyms" aria-selected="false" tabindex="-1" class="rounded-sm px-2 py-1.5 text-base font-medium text-zinc-600 hover:text-zinc-900 aria-selected:bg-white aria-selected:text-zinc-900 aria-selected:shadow-sm pointer-coarse:py-2.5" data-i18n="step3"></button>
+      <!-- Stepper: numbered dots joined by a line; a finished step shows a check (see .step in input.css) -->
+      <nav id="steps" hidden role="tablist" data-i18n-aria="steps" class="mx-3 mb-3 grid shrink-0 grid-cols-3">
+        <button type="button" role="tab" id="tab-describe" data-step="describe" aria-controls="step-describe" aria-selected="true" class="step">
+          <span class="step-dot"><span class="step-num">1</span><iconify-icon icon="boxicons:check" width="18" height="18" aria-hidden="true"></iconify-icon></span>
+          <span class="step-label" data-i18n="step1"></span>
+          <span class="step-status sr-only"></span>
+        </button>
+        <button type="button" role="tab" id="tab-explore" data-step="explore" aria-controls="step-explore" aria-selected="false" tabindex="-1" class="step">
+          <span class="step-dot"><span class="step-num">2</span><iconify-icon icon="boxicons:check" width="18" height="18" aria-hidden="true"></iconify-icon></span>
+          <span class="step-label" data-i18n="step2"></span>
+          <span class="step-status sr-only"></span>
+        </button>
+        <button type="button" role="tab" id="tab-acronyms" data-step="acronyms" aria-controls="step-acronyms" aria-selected="false" tabindex="-1" class="step">
+          <span class="step-dot"><span class="step-num">3</span><iconify-icon icon="boxicons:check" width="18" height="18" aria-hidden="true"></iconify-icon></span>
+          <span class="step-label" data-i18n="step3"></span>
+          <span class="step-status sr-only"></span>
+        </button>
       </nav>
 
-      <div id="workflow-body" class="wf-body min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 [scrollbar-width:thin]">
+      <div id="workflow-body" class="wf-body flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 pb-4 [scrollbar-gutter:stable] [scrollbar-width:thin]">
 
         <!-- Banners -->
         <div id="banners" class="space-y-2 [&:has(>:not([hidden]))]:mb-3">
@@ -148,7 +181,7 @@
           </div>
           <div id="banner-llm" hidden class="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-base text-amber-900" role="alert">
             <iconify-icon icon="boxicons:alert-triangle" width="18" height="18" class="mt-px" aria-hidden="true"></iconify-icon>
-            <span class="min-w-0 flex-1" data-i18n="llmDown"></span>
+            <span id="banner-llm-text" class="min-w-0 flex-1"></span>
             <button type="button" class="banner-retry shrink-0 font-medium underline" data-i18n="retry">Retry</button>
           </div>
           <div id="banner-warmup" hidden class="flex items-center gap-2 rounded-md bg-sky-50 px-3 py-2 text-base text-sky-900" role="status">
@@ -157,7 +190,7 @@
           </div>
           <div id="banner-lang" hidden class="flex items-start gap-2 rounded-md bg-sky-50 px-3 py-2 text-base text-sky-900" role="status">
             <iconify-icon icon="boxicons:info-circle" width="18" height="18" class="mt-px" aria-hidden="true"></iconify-icon>
-            <span class="min-w-0 flex-1" data-i18n="langHint"></span>
+            <span id="banner-lang-text" class="min-w-0 flex-1"></span>
             <button type="button" id="banner-lang-close" class="shrink-0 font-medium underline" data-i18n="dismiss">Dismiss</button>
           </div>
         </div>
@@ -171,13 +204,12 @@
           </button>
         </div>
 
-        <div id="workspace" hidden>
-          <!-- Describe -->
-          <section id="step-describe" data-step-panel="describe" role="tabpanel" aria-labelledby="tab-describe">
+        <div id="workspace" hidden class="flex flex-1 flex-col">
+          <!-- Describe: fills the panel; answers share the height, button pinned to the bottom -->
+          <section id="step-describe" data-step-panel="describe" role="tabpanel" aria-labelledby="tab-describe" class="flex flex-1 flex-col">
             <p class="text-sm text-zinc-500" data-i18n="step1Help"></p>
-            <div id="questions" class="mt-3 space-y-4"></div>
-            <button type="button" id="generate-words" class="llm-btn btn-primary mt-4 w-full"></button>
-            <p id="words-status" hidden class="mt-2 items-center gap-2 text-sm text-zinc-500" aria-live="polite"></p>
+            <div id="questions" class="mt-3 flex flex-1 flex-col gap-4"></div>
+            <button type="button" id="generate-words" class="llm-btn btn-primary mt-4 w-full shrink-0"></button>
           </section>
 
           <!-- Explore -->
@@ -220,7 +252,7 @@
               <button type="submit" id="generate-acronyms" class="btn-primary col-span-2 w-full"></button>
             </form>
             <p id="per-branch-hint" class="mt-2 text-sm text-zinc-500"></p>
-            <p id="acronym-status" hidden class="mt-2 items-center gap-2 text-sm text-zinc-500" aria-live="polite"></p>
+            <p id="acronym-status" hidden class="mt-2 text-sm text-zinc-500" aria-live="polite"></p>
 
             <div class="mt-4 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-4">
               <select id="sort" class="field w-auto shrink-0 px-2 py-1.5 text-sm" data-i18n-aria="sortBy">

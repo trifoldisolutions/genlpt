@@ -1,4 +1,7 @@
-// Single source of truth for the (provisional) product name.
+// Single source of truth for the product name.
+// GenLPT = Generator of Logical Phrases from Terms, read "Gen-LPT" (like ChatGPT).
 module.exports = {
-  appName: 'gava',
+  appName: 'GenLPT',
+  tagline: 'Acronym Maker Tool',
+  company: { name: 'Trifoldi Solutions', url: 'https://trifoldi.com' },
 };

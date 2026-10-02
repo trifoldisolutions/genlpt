@@ -4,6 +4,11 @@ const { LLMError } = require('./errors');
 const baseUrl = () => (process.env.OLLAMA_URL || 'http://localhost:11434').replace(/\/+$/, '');
 const timeoutMs = () => Number(process.env.LLM_TIMEOUT_MS) || 180000;
 
+// Ollama serves requests one at a time: parallel ones would only queue and burn their timeout.
+const concurrency = 1;
+
+const defaultModel = () => process.env.OLLAMA_MODEL || 'huihui_ai/gemma-4-abliterated:12b';
+
 async function request(pathname, { method = 'GET', body, timeout = timeoutMs() } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -66,4 +71,4 @@ async function warmup(model) {
   await request('/api/chat', { method: 'POST', body: { model, messages: [], keep_alive: '30m' } });
 }
 
-module.exports = { listModels, ping, chat, warmup };
+module.exports = { listModels, ping, chat, warmup, defaultModel, concurrency };

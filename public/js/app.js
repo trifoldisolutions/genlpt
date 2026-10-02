@@ -1,5 +1,5 @@
 // Single-page brainstorm client (vanilla JS).
-import { BRANCHES, COLORS, t, setLang, getLang, errorText, applyStatic } from './i18n.js';
+import { BRANCHES, COLORS, t, errorText, applyStatic, setProvider, llmDownText } from './i18n.js';
 import { createGraph } from './graph.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -12,7 +12,6 @@ const state = {
   modelWarm: false,
   warming: false,
   busy: new Set(), // 'words', 'branch:who', 'word:<id>', 'acronyms'
-  titleAuto: false,
   langHint: false,
   sort: 'score',
   filter: 'all',
@@ -117,6 +116,7 @@ async function checkHealth() {
   } catch {
     state.health = { db: false, llm: false, defaultModel: '' };
   }
+  setProvider(state.health.provider);
   renderBanners();
 }
 
@@ -179,12 +179,10 @@ async function openSession(id, { push = true } = {}) {
     const { session } = await api('GET', `/sessions/${id}`);
     const prevModel = currentModel();
     state.session = session;
-    state.titleAuto = !session.title;
     state.langHint = false;
     state.step = session.acronyms?.length ? 'acronyms' : session.words?.length ? 'explore' : 'describe';
     closePanel();
     if (push) setUrl(id);
-    setLang(session.language);
     renderAll({ resetGraph: true });
     closeDrawer();
     if (currentModel() !== prevModel || !state.modelWarm) warmup();
@@ -203,7 +201,7 @@ async function openSession(id, { push = true } = {}) {
 
 async function createSession() {
   try {
-    const { session } = await api('POST', '/sessions', { language: getLang(), model: currentModel() });
+    const { session } = await api('POST', '/sessions', { language: state.session?.language, model: currentModel() });
     state.sessions.unshift({ _id: session._id, title: session.title, language: session.language, updatedAt: session.updatedAt });
     await openSession(session._id);
     $('#title').focus();
@@ -212,17 +210,21 @@ async function createSession() {
   }
 }
 
+// source: who set it — 'auto' (derived from the "who" answer), 'ai' (suggested on Generate words), 'user'.
+function setTitle(title, source) {
+  state.session.title = title;
+  state.session.titleSource = source;
+  $('#title').value = title;
+  renderGraphLabels();
+}
+
 async function renameSession(id, title) {
+  const titleSource = title ? 'user' : 'auto';
   try {
-    await api('PATCH', `/sessions/${id}`, { title });
+    await api('PATCH', `/sessions/${id}`, { title, titleSource });
     const item = state.sessions.find((s) => s._id === id);
     if (item) { item.title = title; item.updatedAt = new Date().toISOString(); }
-    if (state.session?._id === id) {
-      state.session.title = title;
-      state.titleAuto = !title;
-      $('#title').value = title;
-      renderGraphLabels();
-    }
+    if (state.session?._id === id) setTitle(title, titleSource);
     renderSessions();
   } catch (err) {
     fail(err);
@@ -264,7 +266,7 @@ function queueSave(patch) {
   pendingPatch = pendingPatch || { id: state.session._id, body: {} };
   const body = pendingPatch.body;
   if (patch.answers) body.answers = { ...(body.answers || {}), ...patch.answers };
-  for (const k of ['title', 'language', 'model']) if (patch[k] !== undefined) body[k] = patch[k];
+  for (const k of ['title', 'titleSource', 'language', 'model']) if (patch[k] !== undefined) body[k] = patch[k];
   setSaveStatus('saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 600);
@@ -298,7 +300,13 @@ async function flushSave() {
 
 const words = () => state.session?.words || [];
 const wordById = (id) => words().find((w) => w._id === id);
-const hasAnswer = (b) => !!(state.session?.answers?.[b] || '').trim();
+// Answer limits come from config/limits.js via <body> data attributes; min ignores whitespace.
+const ANSWER_MIN = Number(document.body.dataset.answerMin) || 100;
+const ANSWER_MAX = Number(document.body.dataset.answerMax) || 500;
+const answerText = (b) => state.session?.answers?.[b] || '';
+const answerLength = (b) => answerText(b).replace(/\s/g, '').length;
+const hasAnswer = (b) => answerLength(b) >= ANSWER_MIN;
+const answerTooShort = (b) => { const n = answerLength(b); return n > 0 && n < ANSWER_MIN; };
 
 function llmBusyMessage(key) {
   return state.modelWarm ? t(key) : t('loadingCold');
@@ -330,9 +338,21 @@ async function expandBranches(branches, { all = false } = {}) {
   await flushSave();
   await withBusy(key, async () => {
     const sid = state.session._id;
+    const titleBefore = state.session.title;
     const data = await api('POST', `/sessions/${sid}/expand`, branches.length === 1 ? { branches } : {});
     if (state.session?._id !== sid) return;
     state.modelWarm = true;
+    // First AI title of the session (the server makes it only once). A rename typed while it ran is newer: keep and resave it.
+    if (data.title) {
+      state.session.aiTitle = data.title;
+      if (state.session.title === titleBefore) {
+        setTitle(data.title, 'ai');
+        const item = state.sessions.find((s) => s._id === sid);
+        if (item) { item.title = data.title; renderSessions(); }
+      } else {
+        queueSave({ title: state.session.title, titleSource: state.session.titleSource });
+      }
+    }
     addWords(data.words);
     if (data.words.length && state.step === 'describe') setStep('explore');
     toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
@@ -428,16 +448,16 @@ async function generateAcronyms() {
     maxPerBranch: Number($('#per-branch').value),
   };
   setStep('acronyms');
+  show($('#acronym-status'), false); // the button shows progress; the note returns with the result
   await withBusy('acronyms', async () => {
     const sid = state.session._id;
     const data = await api('POST', `/sessions/${sid}/acronyms/generate`, body);
     if (state.session?._id !== sid) return;
-    if (!data.llmSkipped) state.modelWarm = true;
+    state.modelWarm = true;
     state.session.acronyms.push(...data.acronyms);
     renderAcronyms();
     const note = $('#acronym-status');
-    note.textContent = [data.acronyms.length ? t('acronymsAdded', { n: data.acronyms.length }) : t('noNewAcronyms'), data.llmSkipped ? t('rankedWithoutLlm') : '']
-      .filter(Boolean).join(' ');
+    note.textContent = data.acronyms.length ? t('acronymsAdded', { n: data.acronyms.length }) : t('noNewAcronyms');
     show(note, true);
     if (data.llmError && state.health.llm) toast(errorText({ code: data.llmError.error, message: data.llmError.message }));
   });
@@ -477,7 +497,8 @@ async function clearAcronyms() {
   }
 }
 
-async function copyText(text) {
+// `toastOk: false` when the caller shows its own confirmation next to the button.
+async function copyText(text, { toastOk = true } = {}) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -488,7 +509,21 @@ async function copyText(text) {
     document.execCommand('copy');
     ta.remove();
   }
-  toast(t('copied'), 'ok');
+  if (toastOk) toast(t('copied'), 'ok');
+}
+
+// Confirms a copy on the button itself: a green check for 1.5 s, then the copy icon again.
+function flashCopied(btn, size) {
+  const label = btn.getAttribute('aria-label');
+  btn.replaceChildren(icon('check', size, 'text-emerald-600'));
+  btn.title = t('copied');
+  btn.setAttribute('aria-label', t('copied'));
+  clearTimeout(btn.copiedTimer);
+  btn.copiedTimer = setTimeout(() => {
+    btn.replaceChildren(icon('copy', size));
+    btn.title = t('copy');
+    btn.setAttribute('aria-label', label);
+  }, 1500);
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +536,9 @@ function renderAll({ resetGraph = false } = {}) {
   const has = !!state.session;
   show($('#workspace'), has);
   show($('#session-bar'), has);
+  show($('#session-meta'), has);
+  // The language/model row sits in the header, so it changes the mobile peek height
+  if (!isDesktop() && sheet.snap === 'peek' && sheet.height !== snapHeights().peek) setSheet('peek', { animate: false });
   show($('#steps'), has);
   show($('#no-session'), !has);
   show($('#wf-intro'), !has);
@@ -529,8 +567,10 @@ function renderAll({ resetGraph = false } = {}) {
 function renderBanners() {
   show($('#banner-db'), !state.health.db);
   show($('#banner-llm'), state.health.db !== undefined && !state.health.llm);
+  $('#banner-llm-text').textContent = llmDownText();
   show($('#banner-warmup'), state.health.llm && state.warming);
   show($('#banner-lang'), !!state.session && state.langHint);
+  if (state.session) $('#banner-lang-text').textContent = t('langHint', { lang: t(`lang_${state.session.language}`) });
   $('#new-session').disabled = !state.health.db;
   $('#empty-new').disabled = !state.health.db;
 }
@@ -542,22 +582,25 @@ function renderSessions() {
     list.append(h('li', { class: 'px-2 py-3 text-base text-zinc-400', text: t('noSessions') }));
     return;
   }
-  const fmt = new Intl.DateTimeFormat(getLang() === 'fr' ? 'fr-FR' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const fmt = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   for (const s of state.sessions) {
     const active = state.session?._id === s._id;
     const name = s.title || t('untitled');
-    const li = h('li', { class: `group flex items-center rounded-md ${active ? 'bg-cerise-50' : 'hover:bg-zinc-100'}` });
+    const li = h('li', { class: `group relative flex items-center rounded-md ${active ? 'bg-cerise-50' : 'hover:bg-zinc-100 focus-within:bg-zinc-100'}` });
     const open = h('button', {
       type: 'button',
       class: 'block min-w-0 flex-1 rounded-md px-2 py-2 text-left',
+      title: name,
       'aria-current': active ? 'true' : undefined,
       onclick: () => { if (!active) openSession(s._id); else closeDrawer(); },
     }, [
       h('span', { class: `block truncate text-base ${active ? 'font-semibold text-cerise-700' : 'font-medium text-zinc-800'} ${s.title ? '' : 'italic'}`, text: name }),
       h('span', { class: 'block text-sm text-zinc-400', text: fmt.format(new Date(s.updatedAt)) }),
     ]);
-    // Actions show on hover/focus with a mouse; always on touch.
-    const actions = h('div', { class: 'flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100' }, [
+    // Actions: with a mouse they float over the title's end on hover/focus (fading it out), so the title
+    // gets the full row width otherwise; on touch they're always visible and sit beside it.
+    const fade = active ? 'from-cerise-50' : 'from-zinc-100';
+    const actions = h('div', { class: `absolute inset-y-0 right-0 flex items-center rounded-r-md bg-linear-to-l ${fade} from-75% to-transparent pl-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:static pointer-coarse:shrink-0 pointer-coarse:bg-none pointer-coarse:pl-0 pointer-coarse:opacity-100` }, [
       h('button', {
         type: 'button',
         class: 'icon-btn',
@@ -602,19 +645,83 @@ function startRename(li, s) {
 
 function renderModelSelect() {
   const sel = $('#model');
-  const current = currentModel();
   const names = state.models.map((m) => m.name);
+  // A model the provider doesn't offer (an Ollama one after switching to OpenRouter) shows as the
+  // default, which is also what the server falls back to.
+  let current = currentModel();
+  if (names.length && !names.includes(current)) current = state.health.defaultModel;
   if (current && !names.includes(current)) names.unshift(current);
+  const usd = (n) => (n ? `$${n}` : 'free');
   sel.replaceChildren(...names.map((n) => {
     const m = state.models.find((x) => x.name === n);
-    const size = m?.size ? ` (${(m.size / 1e9).toFixed(1)} GB)` : '';
-    return h('option', { value: n, text: n + size });
+    // Ollama: size on disk. OpenRouter: price per million tokens, input / output.
+    const detail = m?.size ? ` (${(m.size / 1e9).toFixed(1)} GB)`
+      : m?.price ? ` (${usd(m.price.in)} / ${usd(m.price.out)} per M)` : '';
+    return h('option', { value: n, text: n + detail });
   }));
   sel.value = current;
   sel.disabled = !state.health.llm || !state.session;
 }
 
 const dot = (b, extra = 'size-2.5') => h('span', { class: `inline-block shrink-0 rounded-full ${extra}`, style: { background: COLORS[b] }, 'aria-hidden': 'true' });
+
+// Answers are one paragraph: line breaks and runs of spaces become a single space, leading space goes.
+// While typing, one trailing space survives so the next word can follow; `final` (blur) trims it.
+function tidyAnswer(value, final = false) {
+  const text = value.replace(/\s+/g, ' ').trimStart();
+  return final ? text.trimEnd() : text;
+}
+
+// Tidies the textarea in place, keeping the caret where it was relative to the text.
+function tidyField(ta, final = false) {
+  const clean = tidyAnswer(ta.value, final);
+  if (clean !== ta.value) {
+    const caret = Math.min(tidyAnswer(ta.value.slice(0, ta.selectionStart)).length, clean.length);
+    ta.value = clean;
+    if (document.activeElement === ta) ta.setSelectionRange(caret, caret);
+  }
+  return clean;
+}
+
+// Collapse pasted whitespace before it lands, so maxlength doesn't cut text that tidying would have made fit.
+// insertText keeps the paste undoable and fires input, which tidies the joins.
+function onAnswerPaste(e) {
+  const ta = e.target;
+  const text = e.clipboardData?.getData('text/plain');
+  if (!text) return;
+  const room = ANSWER_MAX - ta.value.length + (ta.selectionEnd - ta.selectionStart);
+  if (document.execCommand('insertText', false, text.replace(/\s+/g, ' ').slice(0, Math.max(0, room)))) e.preventDefault();
+}
+
+// Replaces the answer with the clipboard text, tidied like a typed paste. insertText keeps it undoable (Ctrl+Z)
+// and fires input, which saves it.
+async function pasteAnswer(ta) {
+  let text;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    toast(t('pasteFailed'));
+    return;
+  }
+  const clean = text.replace(/\s+/g, ' ').trim().slice(0, ANSWER_MAX);
+  if (!clean) return;
+  ta.focus();
+  ta.select();
+  if (!document.execCommand('insertText', false, clean)) {
+    ta.value = clean;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+// Small icon-only Copy / Paste button under an answer; the label is its tooltip.
+function answerTool(name, label, onclick) {
+  return h('button', {
+    type: 'button',
+    title: label,
+    class: 'btn-ghost p-0.5 text-zinc-500 pointer-coarse:p-1.5',
+    onclick,
+  }, icon(name, 14));
+}
 
 function renderQuestions() {
   const wrap = $('#questions');
@@ -624,40 +731,72 @@ function renderQuestions() {
     const ta = h('textarea', {
       id,
       rows: '3',
-      maxlength: '2000',
+      maxlength: String(ANSWER_MAX),
+      'aria-describedby': `${id}-count`,
       placeholder: t(`ph_${b}`),
-      class: 'field mt-1.5 resize-y',
-      oninput: (e) => onAnswerInput(b, e.target.value),
+      class: 'field mt-1.5 min-h-20 flex-1 resize-none',
+      oninput: (e) => onAnswerInput(b, e.isComposing ? e.target.value : tidyField(e.target)),
+      onpaste: onAnswerPaste,
+      onblur: (e) => { const v = tidyField(e.target, true); if (v !== answerText(b)) onAnswerInput(b, v); },
     });
-    ta.value = state.session.answers?.[b] || '';
-    const more = h('button', {
-      type: 'button',
-      'data-branch-more': b,
-      class: 'llm-btn btn-ghost shrink-0 py-1 text-sm font-medium',
-      onclick: () => expandBranches([b]),
+    // Answers saved before tidying existed get cleaned (and saved) on open.
+    ta.value = tidyAnswer(answerText(b), true);
+    if (ta.value !== answerText(b)) {
+      state.session.answers[b] = ta.value;
+      queueSave({ answers: { [b]: ta.value } });
+    }
+    const copy = answerTool('copy', t('copy'), async (e) => {
+      const btn = e.currentTarget;
+      await copyText(answerText(b), { toastOk: false });
+      flashCopied(btn, 14);
     });
-    wrap.append(h('div', {}, [
-      h('div', { class: 'flex items-center justify-between gap-2' }, [
-        h('label', { for: id, class: 'flex min-w-0 items-center gap-2 text-base font-medium text-zinc-800' }, [dot(b), t(`q_${b}`)]),
-        more,
-      ]),
+    copy.dataset.answerCopy = b;
+    copy.setAttribute('aria-label', `${t('copy')}: ${t(`q_${b}`)}`);
+    const paste = answerTool('paste', t('paste'), () => pasteAnswer(ta));
+    paste.setAttribute('aria-label', `${t('paste')}: ${t(`q_${b}`)}`);
+    wrap.append(h('div', { class: 'flex flex-1 flex-col' }, [
+      h('label', { for: id, class: 'flex min-w-0 items-center gap-2 text-base font-medium text-zinc-800' }, [dot(b), t(`q_${b}`)]),
       ta,
+      h('div', { class: 'mt-1 flex items-center' }, [
+        copy,
+        paste,
+        h('p', { id: `${id}-count`, 'data-answer-count': b, class: 'ml-auto text-right text-xs tabular-nums' }),
+      ]),
     ]));
+    renderAnswerCount(b);
   }
+}
+
+// Below the minimum: non-space count vs. min (amber). Otherwise: total length vs. max (amber near the cap).
+function renderAnswerCount(b) {
+  const el = document.querySelector(`[data-answer-count="${b}"]`);
+  if (!el) return;
+  const n = answerLength(b);
+  const total = answerText(b).length;
+  if (n < ANSWER_MIN) {
+    el.textContent = t('answerMin', { n, min: ANSWER_MIN });
+    el.className = `ml-auto text-right text-xs tabular-nums ${n ? 'text-amber-600' : 'text-zinc-400'}`;
+  } else {
+    el.textContent = `${total}/${ANSWER_MAX}`;
+    el.className = `ml-auto text-right text-xs tabular-nums ${total >= ANSWER_MAX * 0.9 ? 'text-amber-600' : 'text-zinc-400'}`;
+  }
+  const copy = document.querySelector(`[data-answer-copy="${b}"]`);
+  if (copy) copy.disabled = !answerText(b).trim();
 }
 
 function onAnswerInput(branch, value) {
   state.session.answers[branch] = value;
   const patch = { answers: { [branch]: value } };
-  if (branch === 'who' && state.titleAuto) {
+  // Placeholder title until the AI suggests one; paused during Generate words so it can't overwrite that suggestion.
+  if (branch === 'who' && state.session.titleSource === 'auto' && !state.busy.has('words')) {
     const suggestion = value.trim().replace(/\s+/g, ' ').slice(0, 60);
     const title = suggestion ? suggestion.charAt(0).toLocaleUpperCase() + suggestion.slice(1) : '';
-    state.session.title = title;
-    $('#title').value = title;
+    setTitle(title, 'auto');
     patch.title = title;
-    renderGraphLabels();
+    patch.titleSource = 'auto';
   }
   queueSave(patch);
+  renderAnswerCount(branch);
   renderBusy();
 }
 
@@ -711,18 +850,22 @@ function renderWords() {
   sa.onclick = () => bulkSelect(null, !allOn);
   renderCanvas();
   renderPerBranchHint();
+  renderStepsDone();
   graph?.syncWords(list);
   renderWordList();
   if (state.panel) renderPanel();
 }
 
-// Longest acronym reachable with the selected words under the words-per-branch cap.
+// Longest acronym reachable with the selected words under the words-per-branch cap. Chunks of any length
+// (name-first) have no ceiling; with "Real words only" the dictionary search takes chunks of 2 letters.
 function renderPerBranchHint() {
   const n = Number($('#per-branch').value);
   const selected = words().filter((w) => w.selected);
-  const max = BRANCHES.reduce((sum, b) => sum + Math.min(n, selected.filter((w) => w.branch === b).length), 0)
-    * ($('#chunks').checked ? 2 : 1);
-  $('#per-branch-hint').textContent = t('perBranchHint', { n, max });
+  const count = BRANCHES.reduce((sum, b) => sum + Math.min(n, selected.filter((w) => w.branch === b).length), 0);
+  const chunks = $('#chunks').checked;
+  $('#per-branch-hint').textContent = chunks && !$('#real-only').checked
+    ? t('perBranchHintChunks', { n })
+    : t('perBranchHint', { n, max: count * (chunks ? 2 : 1) });
 }
 
 function wordChip(w) {
@@ -762,7 +905,7 @@ function renderWordList() {
       maxlength: '60',
       placeholder: t('addWordPh'),
       'aria-label': `${t('addWord')} (${t(`b_${b}`)})`,
-      class: 'field min-w-0 flex-1 py-1.5 text-sm',
+      class: 'field min-w-0 flex-1 self-stretch py-0 text-sm',
     });
     const form = h('form', {
       class: 'mt-2 flex items-center gap-1.5',
@@ -770,7 +913,11 @@ function renderWordList() {
         e.preventDefault();
         if (await addManualWord(b, input.value)) { input.value = ''; wrap.querySelector(`[data-add="${b}"]`)?.focus(); }
       },
-    }, [input, h('button', { type: 'submit', class: 'icon-btn border border-zinc-300', 'aria-label': `${t('add')} (${t(`b_${b}`)})`, title: t('add') }, icon('plus', 18))]);
+    }, [
+      renderBranchMore(h('button', { type: 'button', 'data-branch-more': b, class: 'icon-btn border border-zinc-300', onclick: () => expandBranches([b]) })),
+      input,
+      h('button', { type: 'submit', class: 'icon-btn border border-zinc-300', 'aria-label': `${t('add')} (${t(`b_${b}`)})`, title: t('add') }, icon('plus', 18)),
+    ]);
     input.dataset.add = b;
     const allOn = branchWords.length && branchWords.every((w) => w.selected);
     wrap.append(h('div', {}, [
@@ -810,6 +957,19 @@ function partNode(p) {
   ]);
 }
 
+// A part as written in the expansion: its connectors (never bold), then the word with its letter(s)
+// in bold. A reshaped word shows its graph word on hover ("Autonome ← Autonomie").
+function phrasePart(p) {
+  const node = partNode({ ...p, text: p.form });
+  const bare = (s) => (s || '').toLowerCase().replace(/[^\p{L}]/gu, ''); // "Partage," is not reshaped
+  if (bare(p.form) !== bare(p.text)) {
+    node.title = `${p.form.replace(/[,;.]+$/, '')} ← ${p.text}`;
+    node.className = 'underline decoration-zinc-300 decoration-dotted underline-offset-4';
+  }
+  if (!p.lead) return [node];
+  return [p.lead, /['’]$/.test(p.lead) ? '' : ' ', node];
+}
+
 function sortedAcronyms() {
   let list = [...(state.session?.acronyms || [])];
   if (state.filter === 'fav') list = list.filter((a) => a.favorite);
@@ -826,17 +986,19 @@ function badge(text, cls) {
 }
 
 function acronymCard(a) {
+  // Acronyms from before expansions were written only have their words: show those as a list.
+  const phrased = a.parts.every((p) => p.form);
   const expansion = h('p', { class: 'mt-0.5 text-base text-zinc-600' });
   a.parts.forEach((p, i) => {
-    if (i) expansion.append(' · ');
-    expansion.append(partNode(p));
+    if (i) expansion.append(phrased ? ' ' : ' · ');
+    expansion.append(...(phrased ? phrasePart(p) : [partNode(p)]));
   });
   const branchesUsed = a.branchCoverage || new Set(a.parts.map((p) => p.branch)).size;
-  const copyValue = `${a.letters} — ${a.parts.map((p) => p.text).join(' ')}`;
+  const copyValue = `${a.letters} — ${expansion.textContent}`;
   const ids = a.parts.map((p) => p.wordId);
   const scoreCls = a.score == null ? 'bg-zinc-100 text-zinc-400' : a.score >= 70 ? 'bg-emerald-50 text-emerald-700' : a.score >= 40 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700';
   const li = h('li', {
-    class: `rounded-md border bg-white p-3 ${a.favorite ? 'border-amber-300' : 'border-zinc-200'} hover:border-zinc-300`,
+    class: `rounded-md border bg-white p-3 transition-colors ${a.favorite ? 'border-amber-300 hover:border-amber-500 focus-within:border-amber-500' : 'border-zinc-200 hover:border-cerise-400 focus-within:border-cerise-400'}`,
     onmouseenter: () => graph?.highlight(ids),
     onmouseleave: () => graph?.clearHighlight(),
     onfocusin: () => graph?.highlight(ids),
@@ -848,7 +1010,7 @@ function acronymCard(a) {
     ]),
     expansion,
     a.rationale ? h('p', { class: 'mt-2 text-base text-zinc-700', text: a.rationale }) : null,
-    a.tagline ? h('p', { class: 'mt-1 text-base italic text-zinc-500', text: getLang() === 'fr' ? `« ${a.tagline} »` : `“${a.tagline}”` }) : null,
+    a.tagline ? h('p', { class: 'mt-1 text-base italic text-zinc-500', text: `“${a.tagline}”` }) : null,
     h('div', { class: 'mt-2 flex items-center gap-1' }, [
       h('div', { class: 'flex min-w-0 flex-1 flex-wrap gap-1' }, [
         a.isRealWord ? badge(t('realWord'), 'bg-sky-50 text-sky-700') : badge(t('invented'), 'bg-zinc-100 text-zinc-600'),
@@ -894,6 +1056,7 @@ function renderAcronyms() {
   document.querySelectorAll('#filters [data-filter]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
   });
+  renderStepsDone();
 }
 
 // A busy button is disabled by its caller; this only swaps its content.
@@ -902,39 +1065,33 @@ function setButtonBusy(btn, busy, label, busyLabel, iconName = null) {
   btn.setAttribute('aria-busy', String(busy));
 }
 
+// Icon-only "more words" button in a branch's add-word row (Explore step).
+function renderBranchMore(btn) {
+  const b = btn.dataset.branchMore;
+  const own = state.busy.has(`branch:${b}`);
+  const label = hasAnswer(b) ? `${t('moreWords')} (${t(`b_${b}`)})` : t('moreWordsNeedAnswer', { min: ANSWER_MIN });
+  btn.replaceChildren(own ? spinner() : icon('sparkles', 18));
+  btn.setAttribute('aria-busy', String(own));
+  btn.setAttribute('aria-label', own ? t('generatingWords') : label);
+  btn.title = own ? t('generatingWords') : label;
+  btn.disabled = !state.health.llm || own || state.busy.has('words') || !hasAnswer(b);
+  return btn;
+}
+
 function renderBusy() {
   if (!state.session) return;
   const llm = state.health.llm;
   const wordsBusy = state.busy.has('words');
   const gen = $('#generate-words');
   setButtonBusy(gen, wordsBusy, t('generateWords'), t('generatingWords'), 'sparkles');
-  gen.disabled = !llm || wordsBusy || !BRANCHES.some(hasAnswer);
+  gen.disabled = !llm || wordsBusy || !BRANCHES.some(hasAnswer) || BRANCHES.some(answerTooShort);
 
-  document.querySelectorAll('[data-branch-more]').forEach((btn) => {
-    const b = btn.dataset.branchMore;
-    const busy = state.busy.has(`branch:${b}`) || wordsBusy;
-    setButtonBusy(btn, state.busy.has(`branch:${b}`), t('regenerate'), t('generatingWords'), 'refresh-cw');
-    btn.disabled = !llm || busy || !hasAnswer(b);
-  });
-
-  const anyWordBusy = [...state.busy].find((k) => k === 'words' || k.startsWith('branch:') || k.startsWith('word:'));
-  const ws = $('#words-status');
-  ws.replaceChildren(...(anyWordBusy ? [spinner('text-cerise-600'), llmBusyMessage(anyWordBusy.startsWith('word:') ? 'expanding' : 'generatingWords')] : []));
-  ws.style.display = anyWordBusy ? 'flex' : '';
-  show(ws, !!anyWordBusy);
+  document.querySelectorAll('[data-branch-more]').forEach(renderBranchMore);
 
   const acr = state.busy.has('acronyms');
   const btn = $('#generate-acronyms');
   setButtonBusy(btn, acr, t('generateAcronyms'), t('generatingAcronyms'), 'sparkles');
-  btn.disabled = acr || !words().some((w) => w.selected);
-  if (acr) {
-    const st = $('#acronym-status');
-    st.replaceChildren(spinner('text-cerise-600'), state.health.llm ? llmBusyMessage('generatingAcronyms') : t('generatingAcronyms'));
-    st.style.display = 'flex';
-    show(st, true);
-  } else {
-    $('#acronym-status').style.display = '';
-  }
+  btn.disabled = !llm || acr || !words().some((w) => w.selected);
   renderPeekAction();
   if (state.panel) renderPanel();
 }
@@ -954,7 +1111,19 @@ function renderStep() {
     tab.tabIndex = on ? 0 : -1;
   });
   document.querySelectorAll('[data-step-panel]').forEach((p) => show(p, p.dataset.stepPanel === state.step));
+  renderStepsDone();
   renderPeekAction();
+}
+
+// A step is done once it has produced something: words for Describe, acronyms for Explore.
+// Acronyms is the last step, so it never shows as done.
+function renderStepsDone() {
+  const done = { describe: words().length > 0, explore: !!state.session?.acronyms?.length, acronyms: false };
+  document.querySelectorAll('#steps [data-step]').forEach((tab) => {
+    const on = done[tab.dataset.step];
+    tab.dataset.done = String(on);
+    tab.querySelector('.step-status').textContent = on ? ` (${t('stepDone')})` : '';
+  });
 }
 
 // Mobile peek: the current step's primary action, as an icon button in the sheet header.
@@ -977,13 +1146,11 @@ function onPeekAction() {
   else $('#acronym-form').requestSubmit();
 }
 
-function toggleSettings(open = $('#settings').hidden) {
-  show($('#settings'), open);
-  $('#settings-btn').setAttribute('aria-expanded', String(open));
-  if (open) {
-    if (!isDesktop() && sheet.snap === 'peek') setSheet('half');
-    $('#language').focus();
-  }
+// Profile popup (signed-in users only; guests get a plain link to the login page)
+function toggleAccount(open = $('#account-menu').hidden) {
+  show($('#account-menu'), open);
+  $('#account-btn').setAttribute('aria-expanded', String(open));
+  if (open) $('#account-menu button').focus();
 }
 
 const panelMinimized = () => $('#workflow').dataset.min === 'true';
@@ -1001,7 +1168,6 @@ function renderMinimize() {
 function setMinimized(min) {
   $('#workflow').dataset.min = String(min);
   prefs.set('ui.panelMin', min ? '1' : '0');
-  if (min) toggleSettings(false);
   renderMinimize();
   updateVisible();
 }
@@ -1044,7 +1210,8 @@ function measureSafeBottom() {
 
 function snapHeights() {
   const vh = window.innerHeight;
-  return { peek: 96 + safeBottom, half: Math.round(vh * 0.5), full: Math.round(vh * 0.9) };
+  // Peek shows the header: title row, plus the language/model row when a session is open
+  return { peek: 96 + $('#session-meta').offsetHeight + safeBottom, half: Math.round(vh * 0.5), full: Math.round(vh * 0.9) };
 }
 
 function applySheetHeight(px, { animate = true, refit = true } = {}) {
@@ -1271,7 +1438,11 @@ function bindStatic() {
   $('#drawer-backdrop').addEventListener('click', closeDrawer);
   $('#sidebar-collapse').addEventListener('click', () => setSidebar(false));
   $('#wf-min').addEventListener('click', () => setMinimized(!panelMinimized()));
-  $('#settings-btn').addEventListener('click', () => toggleSettings());
+  $('#account-btn')?.addEventListener('click', () => toggleAccount());
+  // Come back to the same session after logging in
+  $('#account-login')?.addEventListener('click', (e) => {
+    e.currentTarget.href = `/app/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+  });
   $('#peek-action').addEventListener('click', onPeekAction);
   bindSheet();
 
@@ -1287,20 +1458,21 @@ function bindStatic() {
     });
   });
 
+  // Clearing the title hands it back to the "who" placeholder.
   $('#title').addEventListener('input', (e) => {
-    state.titleAuto = false;
-    state.session.title = e.target.value;
+    const title = e.target.value;
+    state.session.title = title;
+    state.session.titleSource = title.trim() ? 'user' : 'auto';
     renderGraphLabels();
-    queueSave({ title: e.target.value });
+    queueSave({ title, titleSource: state.session.titleSource });
   });
 
   $('#language').addEventListener('change', (e) => {
     const lang = e.target.value;
     state.session.language = lang;
     state.langHint = words().length > 0;
-    setLang(lang);
     queueSave({ language: lang });
-    renderAll();
+    renderBanners();
   });
 
   $('#model').addEventListener('change', (e) => {
@@ -1316,7 +1488,7 @@ function bindStatic() {
     await checkHealth();
     if (!hadDb && state.health.db) await boot({ skipHealth: true });
     else if (!hadLlm && state.health.llm) { await loadModels(); renderBusy(); warmup(); }
-    if (!state.health.db || !state.health.llm) toast(t(state.health.db ? 'llmDown' : 'dbDown'));
+    if (!state.health.db || !state.health.llm) toast(state.health.db ? llmDownText() : t('dbDown'));
   }));
 
   $('#generate-words').addEventListener('click', () => expandBranches(BRANCHES.filter(hasAnswer), { all: true }));
@@ -1334,19 +1506,20 @@ function bindStatic() {
   $('#acronym-form').addEventListener('submit', (e) => { e.preventDefault(); generateAcronyms(); });
   $('#per-branch').addEventListener('change', renderPerBranchHint);
   $('#chunks').addEventListener('change', renderPerBranchHint);
+  $('#real-only').addEventListener('change', renderPerBranchHint);
   $('#sort').addEventListener('change', (e) => { state.sort = e.target.value; renderAcronyms(); });
   document.querySelectorAll('#filters [data-filter]').forEach((b) => b.addEventListener('click', () => { state.filter = b.dataset.filter; renderAcronyms(); }));
   $('#clear-acronyms').addEventListener('click', clearAcronyms);
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('#settings').hidden) { toggleSettings(false); $('#settings-btn').focus(); return; }
+    if ($('#account-menu') && !$('#account-menu').hidden) { toggleAccount(false); $('#account-btn').focus(); return; }
     if (state.panel) { closePanel(); return; }
     closeDrawer();
     if (!isDesktop() && sheet.snap !== 'peek') setSheet('peek');
   });
   document.addEventListener('pointerdown', (e) => {
-    if (!$('#settings').hidden && !e.target.closest('#settings, #settings-btn')) toggleSettings(false);
+    if ($('#account-menu') && !$('#account-menu').hidden && !e.target.closest('#account-menu, #account-btn')) toggleAccount(false);
     if (!state.panel) return;
     const panel = $('#panel');
     if (panel.contains(e.target) || e.target.closest('#graph') || state.panel.anchor?.contains(e.target)) return;
@@ -1390,7 +1563,6 @@ async function boot({ skipHealth = false } = {}) {
   }
 }
 
-setLang('fr');
 initSidebar();
 measureSafeBottom();
 setSheet('peek', { animate: false });

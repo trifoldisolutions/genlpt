@@ -5,10 +5,10 @@
 @source "../public/js";
 
 @theme {
-  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "SUSE", ui-sans-serif, system-ui, sans-serif;
 
-  /* Type scale: 15px base, ratio 1.2 (rem stays 16px so spacing/tap targets are unchanged) */
-  --type-base: 0.9375rem;
+  /* Type scale: 14px base, ratio 1.2 (rem stays 16px so spacing/tap targets are unchanged) */
+  --type-base: 0.875rem;
   --type-ratio: 1.2;
   --text-xs: calc(var(--type-base) / (var(--type-ratio) * var(--type-ratio)));
   --text-xs--line-height: 1.4;
@@ -82,6 +82,39 @@
   .field:disabled { @apply cursor-not-allowed bg-zinc-100 text-zinc-500; }
 
   .label { @apply block text-sm font-medium text-zinc-600; }
+
+  /* Quiet compact select: session language + model above the title */
+  .meta-select { @apply rounded-md border border-transparent bg-zinc-100 px-2 py-1 text-sm text-zinc-700; }
+  .meta-select:not(:disabled) { @apply cursor-pointer; }
+  .meta-select:not(:disabled):hover { @apply bg-zinc-200 text-zinc-900; }
+  .meta-select:focus { @apply border-cerise-500 outline-none ring-2 ring-cerise-100; }
+  .meta-select:disabled { @apply cursor-not-allowed text-zinc-400; }
+
+  /* Workflow stepper (#steps): a dot over a label; a line joins each dot to the previous one.
+     aria-selected = current step (filled dot); data-done = the step produced something (check, pink line onward). */
+  .step { @apply relative flex flex-col items-center gap-1 rounded-md px-1 py-1 text-sm font-medium text-zinc-500; }
+  .step:hover { @apply text-zinc-900; }
+  .step + .step::before {
+    content: '';
+    position: absolute;
+    top: calc(1.125rem - 1px); /* py-1 + half the dot - half the line */
+    left: calc(-50% + 1.25rem);
+    right: calc(50% + 1.25rem);
+    height: 2px;
+    border-radius: 9999px;
+    background: var(--color-zinc-200);
+  }
+  .step[data-done="true"] + .step::before { background: var(--color-cerise-500); }
+  .step-dot {
+    @apply flex size-7 items-center justify-center rounded-full border-2 border-zinc-300 bg-white text-sm font-semibold tabular-nums text-zinc-500 transition-colors;
+  }
+  .step:hover .step-dot { @apply border-zinc-400 text-zinc-700; }
+  .step-dot iconify-icon { display: none; }
+  .step[data-done="true"]:not([aria-selected="true"]) .step-num { display: none; }
+  .step[data-done="true"]:not([aria-selected="true"]) .step-dot iconify-icon { display: inline-block; }
+  .step[data-done="true"] .step-dot { @apply border-cerise-500 bg-cerise-50 text-cerise-600; }
+  .step[aria-selected="true"] { @apply font-semibold text-zinc-900; }
+  .step[aria-selected="true"] .step-dot { @apply border-cerise-600 bg-cerise-600 text-white; }
 }
 
 /* ---- App shell state (unlayered so it wins over utilities) ---- */
@@ -108,4 +141,28 @@
   :root { --sheet-peek: calc(96px + env(safe-area-inset-bottom)); }
   #workflow { height: var(--sheet-h, var(--sheet-peek)); }
   #workflow.sheet-anim { transition: height 200ms ease; }
+}
+
+/* ---- Auth page ---- */
+
+.dot-grid {
+  background-color: var(--color-zinc-50);
+  background-image: radial-gradient(var(--color-zinc-200) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Word labels get a canvas-colored outline, like Cytoscape's text-outline */
+.sc-halo { paint-order: stroke; stroke: var(--color-zinc-50); stroke-width: 4px; stroke-linejoin: round; }
+.sc-word { transform-box: fill-box; transform-origin: center; }
+.sc-word, .sc-edge, .sc-letter, .sc-expansion { transition: opacity 300ms ease; }
+#showcase.leaving :is(.sc-word, .sc-edge, .sc-letter, .sc-expansion) { opacity: 0; }
+#showcase.play .sc-word { animation: sc-in 450ms cubic-bezier(.2, .7, .3, 1) both; animation-delay: calc(var(--i) * 160ms); }
+#showcase.play .sc-edge { animation: sc-fade 300ms ease both; animation-delay: calc(var(--i) * 160ms); }
+#showcase.play .sc-letter { animation: sc-rise 400ms cubic-bezier(.2, .7, .3, 1) both; animation-delay: calc(800ms + var(--i) * 110ms); }
+#showcase.play .sc-expansion { animation: sc-fade 400ms ease both; animation-delay: 1350ms; }
+@keyframes sc-in { from { opacity: 0; transform: scale(.6); } }
+@keyframes sc-rise { from { opacity: 0; transform: translateY(.35em); } }
+@keyframes sc-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #showcase :is(.sc-word, .sc-edge, .sc-letter, .sc-expansion) { animation: none !important; transition: none; }
 }

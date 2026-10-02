@@ -1,18 +1,112 @@
 <%- include('../partials/head') %>
-<div class="mx-auto grid max-w-3xl gap-6 sm:grid-cols-2">
-  <form class="rounded-md border border-zinc-200 bg-white p-6" onsubmit="return false">
-    <h2 class="text-xl font-semibold">Log in</h2>
-    <label class="mt-4 block text-sm">Email<input type="email" name="email" class="mt-1 w-full rounded border border-zinc-300 px-3 py-2"></label>
-    <label class="mt-3 block text-sm">Password<input type="password" name="password" class="mt-1 w-full rounded border border-zinc-300 px-3 py-2"></label>
-    <button class="mt-4 w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white">Log in</button>
-  </form>
-  <form class="rounded-md border border-zinc-200 bg-white p-6" onsubmit="return false">
-    <h2 class="text-xl font-semibold">Sign up</h2>
-    <label class="mt-4 block text-sm">Name<input type="text" name="name" class="mt-1 w-full rounded border border-zinc-300 px-3 py-2"></label>
-    <label class="mt-3 block text-sm">Email<input type="email" name="email" class="mt-1 w-full rounded border border-zinc-300 px-3 py-2"></label>
-    <label class="mt-3 block text-sm">Password<input type="password" name="password" class="mt-1 w-full rounded border border-zinc-300 px-3 py-2"></label>
-    <button class="mt-4 w-full rounded-md border border-zinc-900 py-2 text-sm font-medium">Create account</button>
-  </form>
+<%
+  const signup = mode === 'signup';
+  const q = next === '/app' ? '' : `?next=${encodeURIComponent(next)}`;
+  // Showcase: one word per branch (who, what, how, why), read clockwise from top-left
+  const branches = [
+    { name: 'Who', color: '#4f46e5', node: [128, 120], word: [78, 58], label: [116, 124, 'end'], above: true, leaves: [[48, 118], [150, 46]] },
+    { name: 'What', color: '#059669', node: [272, 118], word: [322, 56], label: [284, 122, 'start'], above: true, leaves: [[352, 122], [250, 44]] },
+    { name: 'How', color: '#d97706', node: [276, 252], word: [326, 318], label: [288, 256, 'start'], above: false, leaves: [[354, 250], [250, 332]] },
+    { name: 'Why', color: '#0284c7', node: [124, 254], word: [74, 322], label: [112, 258, 'end'], above: false, leaves: [[46, 258], [150, 334]] },
+  ];
+  const examples = [
+    ['New', 'Entrepreneurs', 'Starting', 'Together'],
+    ['Makers', 'Artists', 'Planners', 'Storytellers'],
+    ['Helping', 'Independent', 'Volunteers', 'Engage'],
+    ['Students', 'Exploring', 'Ecology', 'Daily'],
+  ];
+  const first = examples[0];
+%>
+<div class="flex min-h-dvh flex-col lg:flex-row">
+
+  <!-- Form column -->
+  <div class="flex flex-1 flex-col bg-white px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-8 lg:w-[480px] lg:flex-none">
+    <a href="/app" class="self-start">
+      <span class="block text-lg font-bold leading-tight tracking-tight"><%= appName %></span>
+      <span class="block text-sm text-zinc-500"><%= brand.tagline %></span>
+    </a>
+
+    <main class="mx-auto flex w-full max-w-sm flex-1 flex-col pb-10 pt-12 lg:justify-center lg:py-10">
+      <h1 class="text-2xl font-bold tracking-tight"><%= signup ? 'Create your account' : 'Welcome back' %></h1>
+      <p class="mt-1 text-base text-zinc-500"><%= signup ? 'Keep your sessions and favorite acronyms in one place.' : 'Log in to pick up your sessions where you left them.' %></p>
+
+      <nav class="mt-6 grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1" aria-label="Account">
+        <% [['login', 'Log in'], ['signup', 'Sign up']].forEach(([m, label]) => { %>
+        <a href="/app/<%= m %><%= q %>" <% if (m === mode) { %>aria-current="page"<% } %> class="rounded-sm px-2 py-1.5 text-center text-base font-medium text-zinc-600 hover:text-zinc-900 aria-[current=page]:bg-white aria-[current=page]:text-zinc-900 aria-[current=page]:shadow-sm pointer-coarse:py-2.5"><%= label %></a>
+        <% }) %>
+      </nav>
+
+      <form id="auth-form" method="post" action="/app/<%= mode %>" class="mt-5 space-y-3">
+        <input type="hidden" name="next" value="<%= next %>">
+        <% if (signup) { %>
+        <label class="block">
+          <span class="label">Name</span>
+          <input type="text" name="name" autocomplete="name" required class="field mt-1">
+        </label>
+        <% } %>
+        <label class="block">
+          <span class="label">Email</span>
+          <input type="email" name="email" autocomplete="email" required class="field mt-1">
+        </label>
+        <div>
+          <label for="password" class="label">Password</label>
+          <div class="relative mt-1">
+            <input type="password" id="password" name="password" autocomplete="<%= signup ? 'new-password' : 'current-password' %>" <% if (signup) { %>minlength="8" aria-describedby="password-hint"<% } %> required class="field pr-11">
+            <button type="button" data-reveal aria-controls="password" aria-pressed="false" aria-label="Show password" title="Show password" class="icon-btn absolute right-0 top-1/2 -translate-y-1/2">
+              <iconify-icon icon="boxicons:eye" width="20" height="20" aria-hidden="true"></iconify-icon>
+            </button>
+          </div>
+          <% if (signup) { %><p id="password-hint" class="mt-1 text-sm text-zinc-500">At least 8 characters.</p><% } %>
+        </div>
+        <button type="submit" class="btn-primary !mt-5 w-full">
+          <iconify-icon icon="<%= signup ? 'boxicons:user-plus' : 'boxicons:arrow-in-right-square-half' %>" width="20" height="20" aria-hidden="true"></iconify-icon>
+          <span><%= signup ? 'Create account' : 'Log in' %></span>
+        </button>
+        <p id="auth-note" hidden role="status" class="rounded-md bg-sky-50 px-3 py-2 text-base text-sky-900">Accounts aren't live yet. Continue as a guest for now.</p>
+      </form>
+
+      <div class="my-5 flex items-center gap-3 text-sm text-zinc-400" aria-hidden="true">
+        <span class="h-px flex-1 bg-zinc-200"></span>or<span class="h-px flex-1 bg-zinc-200"></span>
+      </div>
+      <a href="<%= next %>" class="btn-ghost w-full justify-center border border-zinc-200 py-2.5 font-medium text-zinc-700">
+        Continue as guest
+        <iconify-icon icon="boxicons:arrow-right-stroke" width="18" height="18" aria-hidden="true"></iconify-icon>
+      </a>
+    </main>
+
+    <a href="<%= brand.company.url %>" target="_blank" rel="noopener" class="self-start text-xs text-zinc-400 hover:text-cerise-600 hover:underline">by <%= brand.company.name %></a>
+  </div>
+
+  <!-- Showcase: a miniature of the app's graph spelling example acronyms (decorative) -->
+  <aside id="showcase" class="play dot-grid relative flex flex-col items-center justify-center gap-6 overflow-hidden border-t border-zinc-200 px-4 py-10 lg:flex-1 lg:border-l lg:border-t-0 lg:py-0" data-examples="<%= JSON.stringify(examples) %>" aria-hidden="true">
+    <svg viewBox="0 0 400 380" class="hidden w-full max-w-[520px] lg:block" fill="none">
+      <g stroke="#d4d4d8" stroke-width="1">
+        <% branches.forEach((b) => { %>
+        <line x1="200" y1="186" x2="<%= b.node[0] %>" y2="<%= b.node[1] %>"/>
+        <% b.leaves.forEach(([x, y]) => { %><line x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= x %>" y2="<%= y %>" stroke="#e4e4e7"/><% }) %>
+        <% }) %>
+      </g>
+      <% branches.forEach((b, i) => { %>
+      <line class="sc-edge" style="--i:<%= i %>" x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= b.word[0] %>" y2="<%= b.word[1] %>" stroke="<%= b.color %>" stroke-width="1.25"/>
+      <% b.leaves.forEach(([x, y]) => { %><circle cx="<%= x %>" cy="<%= y %>" r="4" fill="#fff" stroke="#d4d4d8" stroke-width="1.25"/><% }) %>
+      <circle cx="<%= b.node[0] %>" cy="<%= b.node[1] %>" r="8" fill="<%= b.color %>"/>
+      <text x="<%= b.label[0] %>" y="<%= b.label[1] %>" text-anchor="<%= b.label[2] %>" font-size="12" font-weight="600" fill="#3f3f46"><%= b.name %></text>
+      <g class="sc-word" style="--i:<%= i %>">
+        <circle cx="<%= b.word[0] %>" cy="<%= b.word[1] %>" r="6" fill="<%= b.color %>"/>
+        <text data-word x="<%= b.word[0] %>" y="<%= b.word[1] + (b.above ? -13 : 22) %>" text-anchor="middle" font-size="15" fill="#52525b" class="sc-halo"><tspan font-weight="700" fill="<%= b.color %>"><%= first[i][0] %></tspan><tspan><%= first[i].slice(1) %></tspan></text>
+      </g>
+      <% }) %>
+      <circle cx="200" cy="186" r="13" fill="#de247d" stroke="#fcceea" stroke-opacity=".6" stroke-width="7"/>
+    </svg>
+
+    <div class="text-center">
+      <p class="text-sm font-medium text-zinc-500">Four questions, one name.</p>
+      <p class="mt-2 text-4xl font-bold tracking-[0.18em] lg:text-5xl">
+        <% branches.forEach((b, i) => { %><span data-letter class="sc-letter inline-block" style="--i:<%= i %>; color:<%= b.color %>"><%= first[i][0] %></span><% }) %>
+      </p>
+      <p data-expansion class="sc-expansion mt-2 text-base text-zinc-500"><%= first.join(' ') %></p>
+    </div>
+  </aside>
 </div>
-<p class="mt-4 text-center text-xs text-zinc-400">Placeholder — auth not wired up yet.</p>
+<script src="/js/auth.js" defer></script>
 <%- include('../partials/foot') %>

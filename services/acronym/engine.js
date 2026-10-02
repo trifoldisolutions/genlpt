@@ -1,13 +1,13 @@
 // Deterministic acronym candidate generation + scoring (no LLM).
-const { initials } = require('./normalize');
+const { initials, conceptKey } = require('./normalize');
 
 const VOWELS = new Set(['A', 'E', 'I', 'O', 'U', 'Y']);
 const NODE_BUDGET = 1500; // max search nodes per dictionary word (keeps 2–8 letters + chunks < 2 s)
 
 // words: [{ _id, branch, text }] → pool entries with contributable letters
-function buildPool(words) {
+function buildPool(words, language = 'fr') {
   return words
-    .map((w) => ({ id: String(w._id ?? w.id), branch: w.branch, text: w.text, ...initials(w.text) }))
+    .map((w) => ({ id: String(w._id ?? w.id), branch: w.branch, text: w.text, ...initials(w.text, language) }))
     .filter((w) => w.one);
 }
 
@@ -48,9 +48,10 @@ function lengthPreference(n) {
   return 0;
 }
 
-// Branch coverage is the major weight (25 per branch, max 100), then length (≤20) and sound (≤20).
+// Branch coverage is a small bonus (5 per branch, max 20) next to length (≤20) and sound (≤20):
+// whether the expansion reads as a real name is judged later, on the written phrase.
 function engineScore(letters, branchCoverage) {
-  return Math.round(branchCoverage * 25 + lengthPreference(letters.length) + pronounceability(letters));
+  return Math.round(branchCoverage * 5 + lengthPreference(letters.length) + pronounceability(letters));
 }
 
 // Letter → groups lookup, built once per generation run.
@@ -147,6 +148,12 @@ function letterCapacity(pool, { allowChunks = false, maxPerBranch = Infinity } =
   return words * (allowChunks ? 2 : 1);
 }
 
+// The same word can sit in several branches ("Lien" in who and how, "Acronym" and "Acronyms");
+// an acronym uses it once.
+function hasRepeatedWord(parts) {
+  return new Set(parts.map((p) => conceptKey(p.text))).size < parts.length;
+}
+
 function letterIndex(c) {
   return c.charCodeAt(0) - 65;
 }
@@ -160,8 +167,8 @@ function hash(s) {
 
 // Dictionary pass: every dictionary word that the selected words can spell.
 // `exclude` holds candidateKey()s already in the session so repeat runs surface new ones.
-function generateEngineCandidates({ words, dictionary, minLength = 3, maxLength = 6, allowChunks = false, maxPerBranch = Infinity, limit = 120, exclude = null }) {
-  const pool = buildPool(words);
+function generateEngineCandidates({ words, dictionary, language = 'fr', minLength = 3, maxLength = 6, allowChunks = false, maxPerBranch = Infinity, limit = 120, exclude = null }) {
+  const pool = buildPool(words, language);
   const groups = indexGroups(groupPool(pool), allowChunks);
   const maxBranches = new Set(pool.map((w) => w.branch)).size;
   const maxLetters = letterCapacity(pool, { allowChunks, maxPerBranch });
@@ -191,7 +198,7 @@ function generateEngineCandidates({ words, dictionary, minLength = 3, maxLength 
     if (!ok) continue;
 
     const found = coverWord(target, groups, { maxBranches, maxPerBranch });
-    if (!found) continue;
+    if (!found || hasRepeatedWord(found.parts)) continue;
     const candidate = {
       letters: target,
       parts: found.parts,
@@ -210,7 +217,7 @@ function generateEngineCandidates({ words, dictionary, minLength = 3, maxLength 
 
 // Validate an LLM-proposed ordered id list; the code, not the LLM, computes the letters.
 // idMap: Map('w1' → { _id, branch, text }). Returns a candidate or null.
-function candidateFromIds(ids, idMap, { minLength = 3, maxLength = 6, maxPerBranch = Infinity } = {}) {
+function candidateFromIds(ids, idMap, { language = 'fr', minLength = 3, maxLength = 6, maxPerBranch = Infinity } = {}) {
   if (!Array.isArray(ids) || ids.length === 0) return null;
   const seen = new Set();
   const perBranch = {};
@@ -222,12 +229,12 @@ function candidateFromIds(ids, idMap, { minLength = 3, maxLength = 6, maxPerBran
     const w = idMap.get(id);
     perBranch[w.branch] = (perBranch[w.branch] || 0) + 1;
     if (perBranch[w.branch] > maxPerBranch) return null;
-    const { one } = initials(w.text);
+    const { one } = initials(w.text, language);
     if (!one) return null;
     parts.push({ wordId: String(w._id ?? w.id), text: w.text, branch: w.branch, letters: one });
   }
   const letters = parts.map((p) => p.letters).join('');
-  if (letters.length < minLength || letters.length > maxLength) return null;
+  if (letters.length < minLength || letters.length > maxLength || hasRepeatedWord(parts)) return null;
   const branchCoverage = new Set(parts.map((p) => p.branch)).size;
   return { letters, parts, branchCoverage, engineScore: engineScore(letters, branchCoverage), source: 'llm' };
 }

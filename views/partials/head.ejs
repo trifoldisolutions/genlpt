@@ -1,4 +1,4 @@
-<% const isApp = locals.shell === 'app'; %>
+<% const isApp = locals.shell === 'app'; const bare = isApp || locals.shell === 'auth'; %>
 <!DOCTYPE html>
 <html lang="<%= typeof lang !== 'undefined' ? lang : 'en' %>">
 <head>
@@ -7,12 +7,12 @@
   <title><%= locals.title ? `${title} · ${appName}` : appName %></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=SUSE:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/output.css">
   <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2/dist/iconify-icon.min.js"></script>
 </head>
-<body class="<%= isApp ? 'h-dvh overflow-hidden' : 'min-h-screen' %> bg-zinc-50 font-sans text-zinc-900 antialiased" data-app-name="<%= appName %>">
-<% if (!isApp) { %>
+<body class="<%= isApp ? 'h-dvh overflow-hidden' : 'min-h-dvh' %> bg-zinc-50 font-sans text-zinc-900 antialiased" data-app-name="<%= appName %>" data-answer-min="<%= limits.ANSWER_MIN_CHARS %>" data-answer-max="<%= limits.ANSWER_MAX_CHARS %>">
+<% if (!bare) { %>
   <header class="border-b border-zinc-200 bg-white">
     <nav class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
       <a href="/" class="font-bold tracking-tight"><%= appName %></a>

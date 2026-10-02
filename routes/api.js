@@ -4,13 +4,20 @@ const BrainstormSession = require('../models/BrainstormSession');
 const llm = require('../services/llm');
 const prompts = require('../services/llm/prompts');
 const dictionary = require('../services/acronym/dictionary');
-const { wordKey, cleanWordList } = require('../services/acronym/normalize');
-const { generateEngineCandidates, candidateFromIds, candidateKey, buildPool, letterCapacity } = require('../services/acronym/engine');
+const { conceptKey, cleanWordList, cleanTitle } = require('../services/acronym/normalize');
+const { generateEngineCandidates, candidateKey, buildPool, letterCapacity } = require('../services/acronym/engine');
+const { candidateFromName } = require('../services/acronym/compose');
+const { phraseParts } = require('../services/acronym/phrase');
 
-const { BRANCHES, MAX_WORDS, MAX_ACRONYMS } = BrainstormSession;
+const { ANSWER_MIN_CHARS, ANSWER_MAX_CHARS, answerLength } = require('../config/limits');
+
+const { BRANCHES, TITLE_SOURCES, MAX_WORDS, MAX_ACRONYMS } = BrainstormSession;
 const LANGUAGES = ['fr', 'en'];
-const RANK_CAP = 80;
-const RANK_BATCH = 40;
+const TITLE_MAX_WORDS = 5;
+const NAME_CAP = 36; // "Real words only": dictionary words the LLM names, one request each (~2 s on a local 12B model)
+const RANK_BATCH = 12;
+const COMPOSE_CALLS = 3; // name-first: independent requests of 12 names each, sampled for variety
+const FATAL = new Set(['llm_unavailable', 'llm_timeout']); // stop calling the LLM after these
 
 const router = express.Router();
 
@@ -44,8 +51,9 @@ function findWord(session, wordId) {
   return word;
 }
 
-function branchKeys(session, branch) {
-  return new Set(session.words.filter((w) => w.branch === branch).map((w) => wordKey(w.text)));
+// Keys of the words' ideas: "Acronym" and "Acronyms" are the same idea.
+function wordKeys(words) {
+  return new Set(words.map((w) => conceptKey(w.text)));
 }
 
 function cleanText(value) {
@@ -60,6 +68,28 @@ function newWord(branch, text, source, parentId = null) {
 
 async function pushWords(sessionId, words) {
   await BrainstormSession.updateOne({ _id: sessionId }, { $push: { words: { $each: words } } });
+}
+
+// A session gets one AI title, ever: made on the first Generate words with all four answers, then never redone.
+// titleSource 'ai' without aiTitle: suggested before aiTitle was stored.
+const NO_AI_TITLE = { aiTitle: { $in: ['', null] }, titleSource: { $ne: 'ai' } };
+const hasAiTitle = (session) => !!session.aiTitle || session.titleSource === 'ai';
+
+// Best effort: '' when the model fails or a concurrent request already stored a suggestion.
+async function suggestTitle(session, answers) {
+  try {
+    const p = prompts.projectTitle({ language: session.language, answers, maxWords: TITLE_MAX_WORDS });
+    const out = await llm.chatJSON({ model: sessionModel(session), ...p });
+    const title = cleanTitle(out.title, session.language, TITLE_MAX_WORDS);
+    if (!title) return '';
+    const r = await BrainstormSession.updateOne(
+      { _id: session._id, ...NO_AI_TITLE },
+      { $set: { title, aiTitle: title, titleSource: 'ai' } }
+    );
+    return r.matchedCount ? title : '';
+  } catch {
+    return '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +147,11 @@ router.patch('/sessions/:id', async (req, res) => {
   if (body.title !== undefined) {
     if (typeof body.title !== 'string' || body.title.length > 120) throw new ApiError(400, 'invalid_title', 'Title must be ≤ 120 characters');
     $set.title = body.title.trim();
+    $set.titleSource = $set.title ? 'user' : 'auto';
+  }
+  if (body.titleSource !== undefined) {
+    if (!TITLE_SOURCES.includes(body.titleSource)) throw new ApiError(400, 'invalid_title_source', 'Invalid title source');
+    $set.titleSource = body.titleSource;
   }
   if (body.language !== undefined) {
     if (!LANGUAGES.includes(body.language)) throw new ApiError(400, 'invalid_language', 'Language must be fr or en');
@@ -130,15 +165,16 @@ router.patch('/sessions/:id', async (req, res) => {
     if (typeof body.answers !== 'object' || body.answers === null) throw new ApiError(400, 'invalid_answers', 'answers must be an object');
     for (const b of BRANCHES) {
       if (body.answers[b] === undefined) continue;
-      if (typeof body.answers[b] !== 'string' || body.answers[b].length > 2000) {
-        throw new ApiError(400, 'invalid_answers', `answers.${b} must be a string ≤ 2000 characters`);
+      if (typeof body.answers[b] !== 'string' || body.answers[b].length > ANSWER_MAX_CHARS) {
+        throw new ApiError(400, 'invalid_answers', `answers.${b} must be a string ≤ ${ANSWER_MAX_CHARS} characters`);
       }
-      $set[`answers.${b}`] = body.answers[b];
+      // One paragraph, no stray spaces; the client tidies too but keeps a trailing space while typing.
+      $set[`answers.${b}`] = body.answers[b].replace(/\s+/g, ' ').trim();
     }
   }
   const session = await BrainstormSession.findByIdAndUpdate(req.params.id, { $set }, { returnDocument: 'after', runValidators: true });
   if (!session) throw new ApiError(404, 'session_not_found', 'Session not found');
-  res.json({ session: { _id: session._id, title: session.title, language: session.language, model: session.model, answers: session.answers, updatedAt: session.updatedAt } });
+  res.json({ session: { _id: session._id, title: session.title, titleSource: session.titleSource, language: session.language, model: session.model, answers: session.answers, updatedAt: session.updatedAt } });
 });
 
 router.delete('/sessions/:id', async (req, res) => {
@@ -153,30 +189,47 @@ router.delete('/sessions/:id', async (req, res) => {
 
 router.post('/sessions/:id/expand', async (req, res) => {
   const session = await loadSession(req.params.id);
-  const requested = Array.isArray(req.body?.branches) ? req.body.branches.filter((b) => BRANCHES.includes(b)) : BRANCHES;
-  const branches = requested.filter((b) => (session.answers?.[b] || '').trim());
+  const requested = Array.isArray(req.body?.branches) ? req.body.branches : BRANCHES;
+  const branches = BRANCHES.filter((b) => requested.includes(b) && (session.answers?.[b] || '').trim());
   if (!branches.length) throw new ApiError(422, 'no_answers', 'Answer at least one question first');
+  // Drafts may be short (autosave), but generation needs every answered branch to meet the minimum.
+  if (branches.some((b) => answerLength(session.answers[b]) < ANSWER_MIN_CHARS)) {
+    throw new ApiError(422, 'answer_too_short', `Each answer needs at least ${ANSWER_MIN_CHARS} characters (spaces not counted)`);
+  }
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
 
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
-  const results = await Promise.allSettled(branches.map(async (branch) => {
-    const existing = session.words.filter((w) => w.branch === branch).map((w) => w.text);
-    const p = prompts.branchExpansion({ language: session.language, branch, answers, existing: existing.slice(0, 80) });
-    const out = await llm.chatJSON({ model: sessionModel(session), ...p });
-    return cleanWordList(out.words, branchKeys(session, branch)).slice(0, 12).map((t) => newWord(branch, t, 'llm'));
-  }));
+  // All four answered and no AI title yet: suggest one alongside the words.
+  const wantTitle = branches.length === BRANCHES.length && !hasAiTitle(session);
+  const [results, title] = await Promise.all([
+    Promise.allSettled(branches.map(async (branch) => {
+      const existing = session.words.map((w) => w.text);
+      const p = prompts.branchExpansion({ language: session.language, branch, answers, existing: existing.slice(0, 80) });
+      const out = await llm.chatJSON({ model: sessionModel(session), ...p });
+      return out.words;
+    })),
+    wantTitle ? suggestTitle(session, answers) : '',
+  ]);
 
+  // Each idea stays in the first branch that produced it (who → what → how → why) and is never repeated
+  // in another one, singular and plural counting as the same word.
   const errors = {};
   let added = [];
+  const seen = wordKeys(session.words);
   results.forEach((r, i) => {
-    if (r.status === 'fulfilled') added.push(...r.value);
-    else errors[branches[i]] = { error: r.reason.code || 'llm_error', message: r.reason.message };
+    if (r.status !== 'fulfilled') {
+      errors[branches[i]] = { error: r.reason.code || 'llm_error', message: r.reason.message };
+      return;
+    }
+    const words = cleanWordList(r.value, seen).slice(0, 12);
+    for (const t of words) seen.add(conceptKey(t));
+    added.push(...words.map((t) => newWord(branches[i], t, 'llm')));
   });
   if (!added.length && Object.keys(errors).length === branches.length) throw results[0].reason;
 
   added = added.slice(0, MAX_WORDS - session.words.length);
   if (added.length) await pushWords(session._id, added);
-  res.json({ words: added, errors });
+  res.json({ words: added, errors, title: title || null });
 });
 
 router.post('/sessions/:id/words', async (req, res) => {
@@ -190,7 +243,9 @@ router.post('/sessions/:id/words', async (req, res) => {
     throw new ApiError(400, 'invalid_branch', 'branch must be one of who, what, how, why');
   }
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
-  if (branchKeys(session, wordBranch).has(wordKey(text))) throw new ApiError(422, 'duplicate_word', 'This word already exists in that branch');
+  if (wordKeys(session.words.filter((w) => w.branch === wordBranch)).has(conceptKey(text))) {
+    throw new ApiError(422, 'duplicate_word', 'This word already exists in that branch');
+  }
   const word = newWord(wordBranch, text, 'user', parentId || null);
   await pushWords(session._id, [word]);
   res.status(201).json({ word });
@@ -215,7 +270,7 @@ router.patch('/sessions/:id/words/:wordId', async (req, res) => {
   const $set = {};
   if (req.body?.text !== undefined) {
     const text = cleanText(req.body.text);
-    const clash = session.words.some((w) => w.branch === word.branch && !w._id.equals(word._id) && wordKey(w.text) === wordKey(text));
+    const clash = session.words.some((w) => w.branch === word.branch && !w._id.equals(word._id) && conceptKey(w.text) === conceptKey(text));
     if (clash) throw new ApiError(422, 'duplicate_word', 'This word already exists in that branch');
     $set['words.$.text'] = text;
   }
@@ -257,10 +312,10 @@ router.post('/sessions/:id/words/:wordId/expand', async (req, res) => {
   const seed = findWord(session, req.params.wordId);
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
-  const existing = session.words.filter((w) => w.branch === seed.branch).map((w) => w.text);
+  const existing = session.words.map((w) => w.text);
   const p = prompts.wordExpansion({ language: session.language, branch: seed.branch, seed: seed.text, answers, existing: existing.slice(0, 80) });
   const out = await llm.chatJSON({ model: sessionModel(session), ...p });
-  const words = cleanWordList(out.words, branchKeys(session, seed.branch))
+  const words = cleanWordList(out.words, wordKeys(session.words))
     .slice(0, 8)
     .slice(0, MAX_WORDS - session.words.length)
     .map((t) => newWord(seed.branch, t, 'llm', seed._id));
@@ -278,60 +333,98 @@ function intInRange(value, fallback) {
   return n;
 }
 
-async function creativePass({ session, answers, selected, opts }) {
+// Name-first (the default): the LLM writes full names from the selected words, and candidateFromName()
+// checks each one and takes its letters. A failed request is skipped; if all fail, the error is thrown.
+async function composePass({ session, answers, selected, opts }) {
   const idMap = new Map();
   const idWords = selected.map((w, i) => {
     const id = `w${i + 1}`;
     idMap.set(id, w);
     return { id, branch: w.branch, text: w.text };
   });
-  const p = prompts.creativeAcronyms({ language: session.language, answers, idWords, minLength: opts.minLength, maxLength: opts.maxLength, maxPerBranch: opts.maxPerBranch });
-  const out = await llm.chatJSON({ model: sessionModel(session), ...p });
-  const list = Array.isArray(out.acronyms) ? out.acronyms : [];
+  const p = prompts.composeNames({ language: session.language, answers, idWords, ...opts });
+  const errors = [];
+  const lists = await llm.mapLimit(Array.from({ length: COMPOSE_CALLS }), llm.concurrency(), async () => {
+    try {
+      const out = await llm.chatJSON({ model: sessionModel(session), ...p });
+      return Array.isArray(out.names) ? out.names.slice(0, 20) : [];
+    } catch (err) {
+      errors.push(err);
+      return [];
+    }
+  });
+  if (errors.length === COMPOSE_CALLS) throw errors[0];
+  const isWord = (w) => dictionary.isWord(session.language, w);
   const dict = dictionary.getSet(session.language);
   const found = [];
-  for (const item of list.slice(0, 40)) {
-    const c = candidateFromIds(item?.ids, idMap, opts);
+  for (const item of lists.flat()) {
+    const c = candidateFromName(item, idMap, { ...opts, language: session.language, isWord });
     if (!c) continue;
     c.isRealWord = dict.has(c.letters);
-    if (opts.realWordsOnly && !c.isRealWord) continue;
     found.push(c);
   }
-  return found;
+  return { found, proposed: lists.flat().length, error: errors[0] || null };
 }
 
-async function rankPass({ session, answers, candidates }) {
-  const ranked = [];
-  let failed = null;
-  const batches = [];
-  for (let i = 0; i < candidates.length; i += RANK_BATCH) batches.push(candidates.slice(i, i + RANK_BATCH));
-  // Batches run concurrently (Ollama can serve parallel requests); ranked[] keeps batch order.
-  await Promise.all(batches.map(async (batch, bi) => {
+// One request per candidate (a small model enumerates when given a list): the LLM proposes 3 names
+// and the first that passes phraseParts() is kept. Candidates without a valid name are dropped.
+// Requests run llm.concurrency() at a time: one for Ollama (queued ones would burn their timeout), several when hosted.
+async function namePass({ session, answers, candidates }) {
+  const errors = [];
+  let answered = 0;
+  let stop = false; // after a fatal error (LLM gone, timeout), skip the remaining calls
+  const isWord = (w) => dictionary.isWord(session.language, w);
+  const results = await llm.mapLimit(candidates, llm.concurrency(), async (c) => {
+    if (stop) return null;
     try {
-      const p = prompts.rankAcronyms({ language: session.language, answers, candidates: batch });
+      const p = prompts.nameAcronym({ language: session.language, answers, candidate: c });
       const out = await llm.chatJSON({ model: sessionModel(session), ...p });
-      const byLetters = new Map();
-      for (const r of Array.isArray(out.results) ? out.results : []) {
-        if (r && typeof r.letters === 'string') byLetters.set(r.letters.toUpperCase().replace(/[^A-Z]/g, ''), r);
-      }
-      ranked[bi] = [];
-      for (const c of batch) {
-        const r = byLetters.get(c.letters);
-        if (!r || r.keep === false) continue; // unrated or rejected by the LLM
-        const score = Number(r.score);
-        ranked[bi].push({
-          ...c,
-          score: Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null,
-          rationale: typeof r.rationale === 'string' ? r.rationale.slice(0, 240) : '',
-          tagline: typeof r.tagline === 'string' ? r.tagline.slice(0, 160) : '',
-        });
+      answered++;
+      for (const name of Array.isArray(out.names) ? out.names.slice(0, 5) : []) {
+        const parts = phraseParts(c.parts, name, session.language, isWord);
+        if (parts) return { ...c, parts };
       }
     } catch (err) {
-      failed = err;
-      ranked[bi] = batch.map((c) => ({ ...c, score: null }));
+      errors.push(err);
+      if (FATAL.has(err.code)) stop = true;
     }
-  }));
-  return { ranked: ranked.flat(), failed };
+    return null;
+  });
+  return { named: results.filter(Boolean), errors, answered };
+}
+
+// Scores the named candidates. One the LLM rejects is dropped; one it can't score keeps a null score,
+// since its name already passed the rules.
+async function rankPass({ session, answers, candidates }) {
+  let error = null;
+  const batches = [];
+  for (let i = 0; i < candidates.length; i += RANK_BATCH) batches.push(candidates.slice(i, i + RANK_BATCH));
+  const ranked = await llm.mapLimit(batches, llm.concurrency(), async (batch) => {
+    const byId = new Map();
+    if (!error || !FATAL.has(error.code)) {
+      try {
+        const p = prompts.rankAcronyms({ language: session.language, answers, candidates: batch });
+        const out = await llm.chatJSON({ model: sessionModel(session), ...p });
+        for (const r of Array.isArray(out.results) ? out.results : []) {
+          if (r && typeof r.id === 'string') byId.set(r.id.trim().toLowerCase(), r);
+        }
+      } catch (err) {
+        error = err;
+      }
+    }
+    return batch.flatMap((c, j) => {
+      const r = byId.get(`a${j + 1}`);
+      if (r?.keep === false) return [];
+      const score = Number(r?.score);
+      return [{
+        ...c,
+        score: r && Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null,
+        rationale: typeof r?.rationale === 'string' ? r.rationale.slice(0, 240) : '',
+        tagline: typeof r?.tagline === 'string' ? r.tagline.slice(0, 160) : '',
+      }];
+    });
+  });
+  return { ranked: ranked.flat(), error };
 }
 
 router.post('/sessions/:id/acronyms/generate', async (req, res) => {
@@ -349,69 +442,80 @@ router.post('/sessions/:id/acronyms/generate', async (req, res) => {
   if (session.acronyms.length >= MAX_ACRONYMS) throw new ApiError(422, 'acronym_limit', `A session can hold at most ${MAX_ACRONYMS} acronyms`);
 
   const selected = session.words.filter((w) => w.selected);
-  if (selected.length < opts.minLength) {
-    throw new ApiError(422, 'not_enough_words', `Select at least ${opts.minLength} words`);
+  // Name-first with letter chunks: a few words can give many letters. Otherwise each word gives one (or two) letters.
+  const stretch = opts.allowChunks && !opts.realWordsOnly;
+  const minWords = stretch ? 2 : opts.minLength;
+  if (selected.length < minWords) {
+    throw new ApiError(422, 'not_enough_words', `Select at least ${minWords} words`);
   }
-  const capacity = letterCapacity(buildPool(selected), opts);
-  if (capacity < opts.minLength) {
+  const capacity = letterCapacity(buildPool(selected, session.language), opts);
+  if (!stretch && capacity < opts.minLength) {
     throw new ApiError(422, 'length_unreachable', `With these words and ${opts.maxPerBranch} word(s) per branch, acronyms can have at most ${capacity} letters`);
   }
+  // Every acronym needs an LLM-written full name, so there is no offline mode.
+  if (!(await llm.isAvailable())) throw new llm.LLMError('llm_unavailable', 'The LLM is needed to write the acronyms’ full names');
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
 
   const existing = new Set(session.acronyms.map((a) => candidateKey(a)));
-
-  // 1. Deterministic dictionary pass
-  const started = Date.now();
-  const engine = generateEngineCandidates({
-    words: selected,
-    dictionary: dictionary.getRange(session.language, opts.minLength, opts.maxLength),
-    exclude: existing,
-    ...opts,
-  });
-  const timings = { engineMs: Date.now() - started };
-
-  // 2. LLM creative pass
-  const llmUp = await llm.isAvailable();
-  let creative = [];
-  let llmError = null;
-  if (llmUp) {
-    try {
-      const t0 = Date.now();
-      creative = await creativePass({ session, answers, selected, opts });
-      timings.creativeMs = Date.now() - t0;
-    } catch (err) {
-      llmError = err;
-    }
-  }
-
-  // 3. Merge, dropping anything the session already has
-  const merged = [];
-  for (const c of [...creative, ...engine]) {
+  const fresh = (list) => list.filter((c) => {
     const key = candidateKey(c);
-    if (existing.has(key)) continue;
+    if (existing.has(key)) return false;
     existing.add(key);
-    merged.push(c);
-  }
-  let candidates = merged.slice(0, RANK_CAP);
+    return true;
+  });
+  const timings = {};
+  const stats = {};
+  let llmError = null;
+  let named = [];
 
-  // 4. LLM ranking pass
-  let llmSkipped = !llmUp;
-  if (llmUp && candidates.length) {
-    const t0 = Date.now();
-    const { ranked, failed } = await rankPass({ session, answers, candidates });
-    timings.rankMs = Date.now() - t0;
-    candidates = ranked;
-    if (failed) { llmError = failed; llmSkipped = true; }
+  if (opts.realWordsOnly) {
+    // 1a. Real words only: dictionary words the initials can spell, then the LLM names each one
+    let t0 = Date.now();
+    const engine = generateEngineCandidates({
+      words: selected,
+      dictionary: dictionary.getRange(session.language, opts.minLength, opts.maxLength),
+      language: session.language,
+      exclude: existing,
+      ...opts,
+    });
+    timings.engineMs = Date.now() - t0;
+    const shortlist = fresh(engine).slice(0, NAME_CAP);
+    Object.assign(stats, { engine: engine.length, shortlist: shortlist.length });
+    if (shortlist.length) {
+      t0 = Date.now();
+      const pass = await namePass({ session, answers, candidates: shortlist });
+      timings.nameMs = Date.now() - t0;
+      if (!pass.answered && pass.errors.length) throw pass.errors[0];
+      if (pass.errors.length) llmError = pass.errors[0];
+      named = pass.named;
+    }
   } else {
-    candidates = candidates.map((c) => ({ ...c, score: null }));
+    // 1b. Default, name-first: the LLM writes full names, the code checks them and takes their letters
+    const t0 = Date.now();
+    const pass = await composePass({ session, answers, selected, opts });
+    timings.composeMs = Date.now() - t0;
+    if (pass.error) llmError = pass.error;
+    named = fresh(pass.found);
+    Object.assign(stats, { proposed: pass.proposed, valid: pass.found.length });
+  }
+  stats.named = named.length;
+
+  // 2. LLM ranking: keeps names that make sense and describe the project
+  let candidates = [];
+  if (named.length) {
+    const t0 = Date.now();
+    const { ranked, error } = await rankPass({ session, answers, candidates: named });
+    timings.rankMs = Date.now() - t0;
+    if (error) llmError = llmError || error;
+    candidates = ranked;
   }
 
-  // 5. Append
+  // 3. Append
   const room = MAX_ACRONYMS - session.acronyms.length;
   const acronyms = candidates.slice(0, room).map((c) => ({
     _id: new mongoose.Types.ObjectId(),
     letters: c.letters,
-    parts: c.parts.map((p) => ({ wordId: new mongoose.Types.ObjectId(p.wordId), text: p.text, branch: p.branch, letters: p.letters })),
+    parts: c.parts.map((p) => ({ wordId: new mongoose.Types.ObjectId(p.wordId), text: p.text, branch: p.branch, letters: p.letters, lead: p.lead, form: p.form })),
     isRealWord: !!c.isRealWord,
     branchCoverage: c.branchCoverage,
     engineScore: c.engineScore,
@@ -429,9 +533,8 @@ router.post('/sessions/:id/acronyms/generate', async (req, res) => {
 
   res.json({
     acronyms,
-    llmSkipped,
     llmError: llmError ? { error: llmError.code || 'llm_error', message: llmError.message } : null,
-    stats: { engine: engine.length, creative: creative.length, kept: acronyms.length, ...timings },
+    stats: { ...stats, kept: acronyms.length, ...timings },
   });
 });
 
