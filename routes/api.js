@@ -19,7 +19,7 @@ const { ANSWER_MIN_CHARS, ANSWER_MAX_CHARS, answerLength } = require('../config/
 const { BRANCHES, TITLE_SOURCES, MAX_WORDS, MAX_ACRONYMS } = BrainstormSession;
 const LANGUAGES = ['fr', 'en'];
 const TITLE_MAX_WORDS = 5;
-const NAME_CAP = 36; // "Real words only": dictionary words the LLM names, one request each (~2 s on a local 12B model)
+const NAME_CAP = 36; // "Real words only": dictionary words the LLM names, one request each
 const RANK_BATCH = 12;
 const DOMAIN_BATCH = 10; // acronyms per domain check request (each new name is a registry lookup, 4 per acronym)
 const FATAL = new Set(['llm_unavailable', 'llm_timeout']); // stop calling the LLM after these
@@ -38,8 +38,8 @@ class ApiError extends Error {
 
 const dbReady = () => mongoose.connection.readyState === 1;
 const isId = (id) => mongoose.isValidObjectId(id) && /^[a-f0-9]{24}$/i.test(String(id));
-// Guests always get the cheapest model, whatever the session says; other plans pick any listed one
-const modelFor = async (req, session) => (usage.limitsOf(req).allModels ? session.model || llm.defaultModel() : llm.cheapestModel());
+// Guests always get the guest model (config/models.js), whatever the session says; other plans pick any listed one
+const modelFor = (req, session) => (usage.limitsOf(req).allModels ? session.model || llm.defaultModel() : llm.guestModel());
 
 // Counts one AI action (usage.take) or refuses with 429 usage_limit. A request that then fails gives it back,
 // and so does one that adds nothing: call the returned giveBack(). req.usage is the count to send the page.
@@ -81,7 +81,7 @@ function metered(kind) {
         owner: req.owner,
         sessionId,
         provider: llm.providerName(),
-        settings: llm.settings(),
+        settings: llm.settings(m.calls[0].model),
         status: res.statusCode,
         error: m.error,
         counted: m.counted && res.statusCode < 400,
@@ -197,27 +197,21 @@ async function suggestTitle(session, answers, model) {
 // ---------------------------------------------------------------------------
 // Health & LLM
 
+// Public (guests use the app too): llm.isAvailable() keeps its answer, so a flood of these doesn't become
+// calls to the provider.
 router.get('/health', async (req, res) => {
   res.json({
     db: dbReady(),
     llm: await llm.isAvailable(),
-    provider: llm.providerName(),
     defaultModel: llm.defaultModel(),
   });
 });
 
-// allowed: whether this viewer's plan may use the model (guests: the cheapest only)
-router.get('/models', async (req, res) => {
-  const models = await llm.listModels();
-  const only = usage.limitsOf(req).allModels ? null : await llm.cheapestModel();
+// The platform's models (config/models.js). allowed: whether this viewer's plan may use the model (guests: theirs only)
+router.get('/models', (req, res) => {
+  const models = llm.listModels();
+  const only = usage.limitsOf(req).allModels ? null : llm.guestModel();
   res.json({ models: models.map((m) => ({ ...m, allowed: !only || m.name === only })), defaultModel: llm.defaultModel() });
-});
-
-router.post('/llm/warmup', async (req, res) => {
-  const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : llm.defaultModel();
-  const started = Date.now();
-  await llm.warmup(model);
-  res.json({ ok: true, model, ms: Date.now() - started });
 });
 
 // ---------------------------------------------------------------------------
@@ -264,7 +258,7 @@ router.post('/sessions', restartBlankGuest, ensureOwner, async (req, res) => {
     owner: req.owner,
     expiresAt,
     language: LANGUAGES.includes(language) ? language : 'fr',
-    model: !usage.limitsOf(req).allModels ? await llm.cheapestModel() : typeof model === 'string' ? model.slice(0, 200) : '',
+    model: !usage.limitsOf(req).allModels ? llm.guestModel() : typeof model === 'string' ? model.slice(0, 200) : '',
   });
   res.status(201).json({ session, expiresInMs: expiresInMs(expiresAt) });
 });
@@ -292,8 +286,8 @@ router.patch('/sessions/:id', async (req, res) => {
   }
   if (body.model !== undefined) {
     if (typeof body.model !== 'string' || body.model.length > 200) throw new ApiError(400, 'invalid_model', 'Invalid model');
-    if (!usage.limitsOf(req).allModels && body.model !== (await llm.cheapestModel())) {
-      throw new ApiError(403, 'model_not_allowed', 'Guests use the cheapest model');
+    if (!usage.limitsOf(req).allModels && body.model !== llm.guestModel()) {
+      throw new ApiError(403, 'model_not_allowed', 'Guests use the guest model');
     }
     $set.model = body.model;
   }
@@ -354,7 +348,7 @@ router.post('/sessions/:id/answers/:branch/reformulate', metered('reformulations
     minChars: ANSWER_MIN_CHARS,
     maxChars: ANSWER_MAX_CHARS,
   });
-  const out = await llm.chatJSON({ model: await modelFor(req, session), ...p });
+  const out = await llm.chatJSON({ model: modelFor(req, session), ...p });
   const answer = fitAnswer(out.answer);
   if (!answer) throw new llm.LLMError('invalid_json', 'The model returned no answer');
   if (answer === original) await giveBack(); // nothing changed: not counted
@@ -413,7 +407,7 @@ router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
   }
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
   const giveBack = await useAi(req, res, 'words');
-  const model = await modelFor(req, session);
+  const model = modelFor(req, session);
 
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
   // All four answered and no AI title yet: suggest one alongside the words.
@@ -534,7 +528,7 @@ router.post('/sessions/:id/words/:wordId/expand', metered('expansions'), async (
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
   const existing = session.words.map((w) => w.text);
   const p = prompts.wordExpansion({ language: session.language, branch: seed.branch, seed: seed.text, answers, existing: existing.slice(0, 80) });
-  const out = await llm.chatJSON({ model: await modelFor(req, session), ...p });
+  const out = await llm.chatJSON({ model: modelFor(req, session), ...p });
   const words = cleanWordList(out.words, wordKeys(session.words))
     .slice(0, 8)
     .slice(0, MAX_WORDS - session.words.length)
@@ -591,7 +585,7 @@ async function composePass({ session, answers, selected, opts, model, calls }) {
 
 // One request per candidate (a small model enumerates when given a list): the LLM proposes 3 names
 // and the first that passes phraseParts() is kept. Candidates without a valid name are dropped.
-// Requests run llm.concurrency() at a time: one for Ollama (queued ones would burn their timeout), several when hosted.
+// Requests run llm.concurrency() at a time (OPENROUTER_CONCURRENCY).
 async function namePass({ session, answers, candidates, model }) {
   const errors = [];
   let answered = 0;
@@ -682,7 +676,7 @@ router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res)
   // Every acronym needs an LLM-written full name, so there is no offline mode.
   if (!(await llm.isAvailable())) throw new llm.LLMError('llm_unavailable', 'The LLM is needed to write the acronyms’ full names');
   const giveBack = await useAi(req, res, 'runs');
-  const model = await modelFor(req, session);
+  const model = modelFor(req, session);
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
 
   const existing = new Set(session.acronyms.map((a) => candidateKey(a)));
@@ -843,7 +837,6 @@ router.use((err, req, res, next) => {
 router.routes = [
   { method: 'GET', path: '/health', label: 'DB + LLM health' },
   { method: 'GET', path: '/models', label: 'List LLM models' },
-  { method: 'POST', path: '/llm/warmup', label: 'Load a model into memory' },
   { method: 'GET', path: '/sessions', label: 'List sessions' },
   { method: 'POST', path: '/sessions', label: 'Create session' },
   { method: 'GET', path: '/sessions/:id', label: 'Get session' },

@@ -1,13 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const ENV = ['LLM_PROVIDER', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'OPENROUTER_MODELS', 'OPENROUTER_MAX_TOKENS', 'OPENROUTER_REASONING', 'OPENROUTER_RETRY_MS'];
-const realFetch = global.fetch;
+const config = require('../config/models');
 
-// Fresh modules (the OpenRouter provider caches its model list) with a fake fetch.
-function load(env, routes) {
+const ENV = ['LLM_PROVIDER', 'OPENROUTER_API_KEY', 'OPENROUTER_MAX_TOKENS', 'OPENROUTER_RETRY_MS'];
+const realFetch = global.fetch;
+const REAL_MODELS = [...config.MODELS];
+
+// The platform's models in these tests, in place of config/models.js (put back after each test)
+const MODELS = [
+  { id: 'anthropic/claude-sonnet-5.5' },
+  { id: 'openai/gpt-6-luna', reasoning: 'low', guest: true },
+];
+
+// Fresh modules (the facade keeps its last ping) with a fake fetch and these models.
+function load(env, routes, models = MODELS) {
   for (const k of ENV) delete process.env[k];
   Object.assign(process.env, env);
+  config.MODELS.splice(0, config.MODELS.length, ...models);
   const calls = [];
   global.fetch = async (url, init = {}) => {
     calls.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
@@ -24,16 +34,9 @@ function load(env, routes) {
 test.afterEach(() => {
   global.fetch = realFetch;
   for (const k of ENV) delete process.env[k];
+  config.MODELS.splice(0, config.MODELS.length, ...REAL_MODELS);
 });
 
-const MODELS = [200, {
-  data: [
-    { id: 'anthropic/claude-sonnet-5.5', pricing: { prompt: '0.000002', completion: '0.00001' }, supported_parameters: ['response_format'] },
-    { id: 'anthropic/claude-sonnet-5.5:batch', pricing: { prompt: '0.000001', completion: '0.000005' }, supported_parameters: ['response_format'] },
-    { id: 'openai/gpt-6-luna', pricing: { prompt: '0.0000001', completion: '0.0000005' }, supported_parameters: ['response_format', 'reasoning'], reasoning: { supported_efforts: ['none', 'low', 'medium'] } },
-    { id: 'some/plain-text-model', pricing: { prompt: '0', completion: '0' }, supported_parameters: ['temperature'] },
-  ],
-}];
 const CHAT = [200, { choices: [{ message: { content: '{"names": ["Federal Bureau of Investigation"]}' } }] }];
 
 test('mapLimit keeps order and never exceeds the limit', async () => {
@@ -60,7 +63,7 @@ test('openrouter: chat sends the key, the model and JSON mode, and returns the t
   const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': CHAT });
   const { text } = await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [{ role: 'user', content: 'hi' }], temperature: 0.3 });
   assert.equal(text, '{"names": ["Federal Bureau of Investigation"]}');
-  calls.splice(0, calls.length, ...calls.filter((c) => c.url.endsWith('/chat/completions'))); // the catalog is read first
+  assert.equal(calls.length, 1); // nothing looked up first
   assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(calls[0].init.headers.Authorization, 'Bearer sk-test');
   assert.deepEqual(calls[0].body.response_format, { type: 'json_object' });
@@ -69,19 +72,16 @@ test('openrouter: chat sends the key, the model and JSON mode, and returns the t
   assert.equal(calls[0].body.max_tokens, 4096); // never the model's 65k default, which blocks small balances
 });
 
-test('openrouter: reasoning models are asked for low effort; others get no reasoning field', async () => {
-  let { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/models': MODELS, '/chat/completions': CHAT });
+test('openrouter: each model is asked for the reasoning effort config/models.js gives it, or none', async () => {
+  const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': CHAT });
   await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [] });
   await openrouter.chat({ model: 'anthropic/claude-sonnet-5.5', messages: [] });
-  const bodies = calls.filter((c) => c.body).map((c) => c.body);
-  assert.deepEqual(bodies[0].reasoning, { effort: 'low' });
-  assert.equal(bodies[1].reasoning, undefined);
-  ({ openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test', OPENROUTER_REASONING: 'default' }, { '/models': MODELS, '/chat/completions': CHAT }));
-  await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [] });
-  assert.equal(calls.find((c) => c.body).body.reasoning, undefined); // the model's own default
-  ({ openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test', OPENROUTER_REASONING: 'xhigh' }, { '/models': MODELS, '/chat/completions': CHAT }));
-  await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [] });
-  assert.equal(calls.find((c) => c.body).body.reasoning, undefined); // an effort the model doesn't offer
+  assert.equal(calls.length, 2); // the chats only
+  assert.deepEqual(calls[0].body.reasoning, { effort: 'low' });
+  assert.equal(calls[1].body.reasoning, undefined); // none given: the model's own default
+  // Kept with each AI action for the usage report
+  assert.deepEqual(openrouter.settings('openai/gpt-6-luna'), { reasoning: 'low', maxTokens: 4096 });
+  assert.deepEqual(openrouter.settings('anthropic/claude-sonnet-5.5'), { maxTokens: 4096 });
 });
 
 test('openrouter: a connection cut mid-answer is a model error, not a crash', async () => {
@@ -115,17 +115,62 @@ test('openrouter: a bad key or no credits is "unavailable", other failures are m
   await assert.rejects(openrouter.chat({ model: 'x', messages: [] }), { code: 'llm_error' });
 });
 
-test('openrouter: the dropdown offers the .env model (plus OPENROUTER_MODELS), priced per million', async () => {
-  let { openrouter } = load({ OPENROUTER_MODEL: 'openai/gpt-6-luna' }, { '/models': MODELS });
-  assert.deepEqual(await openrouter.listModels(), [{ name: 'openai/gpt-6-luna', price: { in: 0.1, out: 0.5 } }]);
-  ({ openrouter } = load({ OPENROUTER_MODELS: 'openai/gpt-6-luna, some/unknown-model' }, { '/models': MODELS }));
-  assert.deepEqual(await openrouter.listModels(), [
-    { name: 'anthropic/claude-sonnet-5.5', price: { in: 2, out: 10 } }, // the default, since OPENROUTER_MODEL is unset
-    { name: 'openai/gpt-6-luna', price: { in: 0.1, out: 0.5 } },
-    { name: 'some/unknown-model' },
-  ]);
-  ({ openrouter } = load({ OPENROUTER_MODEL: 'openai/gpt-6-luna' }, {})); // catalog unreachable: still listed, no price
-  assert.deepEqual(await openrouter.listModels(), [{ name: 'openai/gpt-6-luna' }]);
+test('openrouter: ping tries once; a rate limit (429) still means the key works', async () => {
+  const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test', OPENROUTER_RETRY_MS: '1' }, { '/key': [429, { error: { message: 'Rate limit exceeded' } }] });
+  assert.equal(await openrouter.ping(), true);
+  assert.equal(calls.length, 1); // no waiting it out: the public health check answers at once
+});
+
+test('isAvailable shares one ping and keeps its answer: 60 s up, 10 s down', async () => {
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    const up = [200, { data: { label: 'sk-...' } }];
+    const down = [401, { error: { message: 'No auth credentials found' } }];
+    const { llm, calls } = load({ LLM_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test' }, { '/key': { seq: [up, down, up] } });
+    const pings = () => calls.filter((c) => c.url.endsWith('/key')).length;
+    assert.deepEqual(await Promise.all([llm.isAvailable(), llm.isAvailable(), llm.isAvailable()]), [true, true, true]);
+    assert.equal(pings(), 1); // asked at once: one ping
+    now += 59 * 1000;
+    assert.equal(await llm.isAvailable(), true);
+    assert.equal(pings(), 1);
+    now += 2 * 1000;
+    assert.equal(await llm.isAvailable(), false);
+    assert.equal(pings(), 2);
+    now += 9 * 1000;
+    assert.equal(await llm.isAvailable(), false);
+    assert.equal(pings(), 2);
+    now += 2 * 1000;
+    assert.equal(await llm.isAvailable(), true); // a recovery shows within 10 s
+    assert.equal(pings(), 3);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('OpenRouter is the provider by default', async () => {
+  const { llm } = load({}, {});
+  assert.equal(llm.providerName(), 'openrouter');
+  assert.equal(llm.defaultModel(), 'anthropic/claude-sonnet-5.5');
+});
+
+test('the models are the platform’s: the first is the default, guests get the one marked guest', async () => {
+  let { llm, calls } = load({}, {});
+  assert.deepEqual(llm.listModels(), [{ name: 'anthropic/claude-sonnet-5.5' }, { name: 'openai/gpt-6-luna' }]);
+  assert.equal(llm.defaultModel(), 'anthropic/claude-sonnet-5.5');
+  assert.equal(llm.guestModel(), 'openai/gpt-6-luna');
+  assert.equal(calls.length, 0); // nothing asked of OpenRouter
+  ({ llm } = load({}, {}, [{ id: 'a/one' }, { id: 'b/two' }]));
+  assert.equal(llm.guestModel(), 'a/one'); // none marked: the default
+});
+
+test('config/models.js: at least one model, no id twice, one guest at most, known efforts', () => {
+  assert.ok(REAL_MODELS.length >= 1);
+  assert.equal(new Set(REAL_MODELS.map((m) => m.id)).size, REAL_MODELS.length);
+  assert.ok(REAL_MODELS.filter((m) => m.guest).length <= 1);
+  const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  for (const m of REAL_MODELS) assert.ok(m.reasoning === undefined || EFFORTS.includes(m.reasoning), m.id);
 });
 
 test('openrouter: chat returns what it used: tokens, reasoning, cache, and the cost charged', async () => {
@@ -134,16 +179,14 @@ test('openrouter: chat returns what it used: tokens, reasoning, cache, and the c
   const out = await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [] });
   assert.deepEqual(out.usage, { inputTokens: 1200, outputTokens: 300, reasoningTokens: 180, cachedTokens: 1000, cost: 0.0042, rateLimitRetries: 0, waitMs: 0 });
   assert.deepEqual(calls.find((c) => c.body).body.usage, { include: true });
-  assert.deepEqual(openrouter.settings(), { reasoning: 'low', maxTokens: 4096 });
 });
 
-test('openrouter: without a charged cost, the cost comes from the listed prices', async () => {
+test('openrouter: without a charged cost, the cost is unknown (null)', async () => {
   const usage = { prompt_tokens: 1000, completion_tokens: 200 };
-  const { openrouter } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/models': MODELS, '/chat/completions': [200, { ...CHAT[1], usage }] });
+  const { openrouter } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': [200, { ...CHAT[1], usage }] });
   const { usage: used } = await openrouter.chat({ model: 'anthropic/claude-sonnet-5.5', messages: [] });
-  assert.ok(Math.abs(used.cost - (1000 * 0.000002 + 200 * 0.00001)) < 1e-12);
-  const unknown = await openrouter.chat({ model: 'some/unknown-model', messages: [] });
-  assert.equal(unknown.usage.cost, null);
+  assert.equal(used.cost, null);
+  assert.equal(used.inputTokens, 1000);
 });
 
 test('chatJSON records every call on the current meter, JSON retries and failures included; none outside one', async () => {
@@ -152,7 +195,7 @@ test('chatJSON records every call on the current meter, JSON retries and failure
   const prose = [200, { choices: [{ message: { content: 'Sure! Here are names.' } }], usage }];
   const { llm } = load(
     { LLM_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test' },
-    { '/models': MODELS, '/chat/completions': { seq: [prose, [200, { ...CHAT[1], usage }], [500, { error: { message: 'Upstream error' } }], [200, CHAT[1]]] } },
+    { '/chat/completions': { seq: [prose, [200, { ...CHAT[1], usage }], [500, { error: { message: 'Upstream error' } }], [200, CHAT[1]]] } },
   );
   const m = { calls: [] };
   await meter.run(m, async () => {
@@ -170,10 +213,7 @@ test('chatJSON records every call on the current meter, JSON retries and failure
 });
 
 test('a session model the provider does not offer falls back to its default', async () => {
-  const { llm, calls } = load(
-    { LLM_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test', OPENROUTER_MODELS: 'openai/gpt-6-luna' },
-    { '/models': MODELS, '/chat/completions': CHAT },
-  );
+  const { llm, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': CHAT });
   assert.equal(llm.concurrency(), 6);
   const out = await llm.chatJSON({ model: 'huihui_ai/gemma-4-abliterated:12b', user: 'x' });
   assert.deepEqual(out.names, ['Federal Bureau of Investigation']);

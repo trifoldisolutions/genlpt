@@ -115,13 +115,10 @@ function priceFor(actions) {
 // ---------------------------------------------------------------------------
 // Sections
 
-function header(actions, { label, since, until, models }) {
+function header(actions, { label, since, until }) {
   const calls = callsOf(actions);
   const from = since || new Date(Math.min(...actions.map((a) => new Date(a.createdAt))));
-  const used = [...new Set(calls.map((c) => c.model).filter(Boolean))].map((name) => {
-    const price = models.find((m) => m.name === name)?.price;
-    return price ? `${name} (${usd(price.in)} in, ${usd(price.out)} out per million tokens)` : name;
-  });
+  const used = [...new Set(calls.map((c) => c.model).filter(Boolean))];
   const settings = [...new Set(actions.map((a) => {
     const s = a.settings || {};
     return [a.provider, s.reasoning && `reasoning ${s.reasoning}`, s.maxTokens && `max output ${s.maxTokens}`].filter(Boolean).join(', ');
@@ -273,11 +270,10 @@ function priceSection(actions) {
   ].join('\n') + (partial ? '\n\nPartial: some clicks aren\'t tested yet (see the window table).' : '');
 }
 
-// The markdown section for these actions. since: the period's start (null: from the first action);
-// models: [{ name, price: { in, out } }] per million tokens, for the header.
-function build(actions, { label = '', since = null, until = new Date(), models = [] } = {}) {
+// The markdown section for these actions. since: the period's start (null: from the first action).
+function build(actions, { label = '', since = null, until = new Date() } = {}) {
   return [
-    header(actions, { label, since, until, models }),
+    header(actions, { label, since, until }),
     stepSection(actions),
     clickSection(actions),
     outputSection(actions),

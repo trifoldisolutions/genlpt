@@ -10,7 +10,6 @@ const path = require('path');
 const { parseArgs } = require('util');
 const mongoose = require('mongoose');
 const AiAction = require('../models/AiAction');
-const llm = require('../services/llm');
 const report = require('../services/usageReport');
 
 const FILE = path.join(__dirname, '..', 'dev_resources', 'usage_reports.md');
@@ -42,12 +41,7 @@ async function main() {
     return;
   }
 
-  let models = [];
-  try {
-    models = await llm.listModels(); // prices for the header, when the provider can say
-  } catch { /* the report stands without them */ }
-
-  const section = report.build(actions, { label: values.label || '', since, until, models });
+  const section = report.build(actions, { label: values.label || '', since, until });
   if (values.print) {
     console.log(section);
     return;

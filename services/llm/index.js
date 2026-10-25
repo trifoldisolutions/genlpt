@@ -1,13 +1,13 @@
 // Provider-agnostic LLM facade. Add a provider as services/llm/<name>.js exposing
-// listModels(), ping(), chat({ model, messages, temperature }) → { text, usage }, warmup(model),
-// defaultModel() and concurrency (how many requests it serves at once); optionally settings().
+// listModels() → [{ name }], defaultModel(), guestModel(), ping(), chat({ model, messages, temperature }) →
+// { text, usage } and concurrency (how many requests it serves at once); optionally settings(model).
 // usage: { inputTokens, outputTokens (reasoning included), reasoningTokens, cachedTokens, cost (USD) },
 // plus rateLimitRetries and waitMs when the provider waits out rate limits; a failed call may carry err.usage.
-// Providers: ollama (local), openrouter (hosted); pick one with LLM_PROVIDER.
+// Provider: openrouter (hosted), the only one so far; LLM_PROVIDER would pick another added here.
 const { LLMError } = require('./errors');
 const meter = require('./meter');
 
-const providerName = () => (process.env.LLM_PROVIDER || 'ollama').toLowerCase();
+const providerName = () => (process.env.LLM_PROVIDER || 'openrouter').toLowerCase();
 
 const NOT_PROVIDERS = new Set(['index', 'errors', 'prompts', 'meter']);
 
@@ -28,6 +28,15 @@ function defaultModel() {
   }
 }
 
+// The model guests get (config/models.js); every other plan may pick any listed one
+function guestModel() {
+  try {
+    return provider().guestModel();
+  } catch {
+    return defaultModel();
+  }
+}
+
 function concurrency() {
   try {
     return provider().concurrency || 1;
@@ -36,12 +45,12 @@ function concurrency() {
   }
 }
 
-// A session keeps the model it was created with. If the current provider doesn't offer it
-// (an Ollama model after switching to OpenRouter), use the provider's default instead.
-async function resolveModel(model) {
+// A session keeps the model it was created with. If the provider no longer offers it (dropped from
+// config/models.js, or an old session's local Ollama model), use the provider's default instead.
+function resolveModel(model) {
   if (!model) return defaultModel();
   try {
-    const names = (await provider().listModels()).map((m) => m.name);
+    const names = provider().listModels().map((m) => m.name);
     return names.includes(model) ? model : defaultModel();
   } catch {
     return model;
@@ -76,28 +85,31 @@ function parseJSON(text) {
   return undefined;
 }
 
-async function listModels() {
+function listModels() {
   return provider().listModels();
 }
 
-// The cheapest listed model by price per million tokens (input + output); the default when no prices are known
-async function cheapestModel() {
-  try {
-    const priced = (await listModels()).filter((m) => m.price);
-    if (!priced.length) return defaultModel();
-    const cost = (m) => m.price.in + m.price.out;
-    return priced.reduce((best, m) => (cost(m) < cost(best) ? m : best)).name;
-  } catch {
-    return defaultModel();
-  }
-}
+// The provider's ping, shared: callers meanwhile wait for the same one, and its answer is kept a while. The
+// public /api/health asks on every visit, so visitors must not each cost a call to the provider; a recovery
+// still shows within PING_DOWN_MS.
+const PING_UP_MS = 60 * 1000;
+const PING_DOWN_MS = 10 * 1000;
+let lastPing = null; // { provider, answer (a promise), until }
 
-async function isAvailable() {
-  try {
-    return await provider().ping();
-  } catch {
-    return false;
+function isAvailable() {
+  const name = providerName();
+  if (lastPing?.provider !== name || Date.now() >= lastPing.until) {
+    const ping = { provider: name, until: Infinity };
+    ping.answer = Promise.resolve()
+      .then(() => provider().ping())
+      .then(() => true, () => false)
+      .then((ok) => {
+        ping.until = Date.now() + (ok ? PING_UP_MS : PING_DOWN_MS);
+        return ok;
+      });
+    lastPing = ping;
   }
+  return lastPing.answer;
 }
 
 // One provider call, recorded on the current meter (meter.js) with what it used, whether it answers or fails
@@ -117,7 +129,7 @@ async function meteredChat(p, { step, retry, ...args }) {
 // step: what the call is for (the prompt builders set it), to break costs down in the usage report
 async function chatJSON({ model, system, user, temperature = 0.7, step }) {
   const p = provider();
-  const m = await resolveModel(model);
+  const m = resolveModel(model);
   const messages = [
     ...(system ? [{ role: 'system', content: system }] : []),
     { role: 'user', content: user },
@@ -131,17 +143,13 @@ async function chatJSON({ model, system, user, temperature = 0.7, step }) {
   throw new LLMError('invalid_json', 'The model did not return valid JSON');
 }
 
-async function warmup(model) {
-  return provider().warmup(await resolveModel(model));
-}
-
-// The provider's settings that change what calls cost (e.g. reasoning effort), kept with each AI action
-function settings() {
+// The provider's settings that change what a model's calls cost (e.g. reasoning effort), kept with each AI action
+function settings(model) {
   try {
-    return provider().settings?.() || {};
+    return provider().settings?.(model) || {};
   } catch {
     return {};
   }
 }
 
-module.exports = { listModels, cheapestModel, isAvailable, chatJSON, warmup, defaultModel, concurrency, settings, mapLimit, providerName, LLMError };
+module.exports = { listModels, guestModel, isAvailable, chatJSON, defaultModel, concurrency, settings, mapLimit, providerName, LLMError };

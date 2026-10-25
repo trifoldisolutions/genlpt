@@ -1,24 +1,25 @@
-// OpenRouter provider: hosted models behind one OpenAI-style API (https://openrouter.ai).
+// OpenRouter provider: hosted models behind one OpenAI-style API (https://openrouter.ai). The models, and the
+// reasoning effort each is asked for, come from config/models.js.
 const { LLMError } = require('./errors');
 const { appName } = require('../../config/brand');
+const { MODELS } = require('../../config/models');
 
 const baseUrl = () => (process.env.OPENROUTER_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 const timeoutMs = () => Number(process.env.LLM_TIMEOUT_MS) || 180000;
 const apiKey = () => (process.env.OPENROUTER_API_KEY || '').trim();
-const MODELS_TTL = 10 * 60 * 1000;
 // Output cap per call. Without one, OpenRouter checks credits against the model's maximum (often 65k tokens)
 // and refuses calls on a small balance. Answers here are short; reasoning models also spend from this budget.
 const maxTokens = () => Number(process.env.OPENROUTER_MAX_TOKENS) || 4096;
-// Reasoning models think before answering, billed as output and slow (a Luna Pro default: ~7k tokens, ~60 s
-// per call). Short naming tasks don't need it: "low" by default; OPENROUTER_REASONING=default keeps the model's own.
-const reasoningEffort = () => (process.env.OPENROUTER_REASONING || 'low').trim().toLowerCase();
 // Rate limits (429, e.g. 20 requests/min on new accounts): wait and retry this many times.
 const RETRIES = 5; // 2+4+8+16+30 s: enough to outlast a one-minute rate-limit window
 
-// Hosted models take parallel requests (a local Ollama serves them one at a time).
+// Hosted models take parallel requests.
 const concurrency = Number(process.env.OPENROUTER_CONCURRENCY) || 6;
 
-const defaultModel = () => process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-5.5';
+const defaultModel = () => MODELS[0].id;
+const guestModel = () => (MODELS.find((m) => m.guest) || MODELS[0]).id;
+const listModels = () => MODELS.map((m) => ({ name: m.id }));
+const reasoningOf = (model) => MODELS.find((m) => m.id === model)?.reasoning;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,11 +31,13 @@ function retryDelay(res, attempt) {
   return Math.min(Math.max(header, retryBase() * 2 ** attempt), 30000) + Math.random() * retryBase() / 4;
 }
 
-// opts.waits: { rateLimitRetries, waitMs }, counted up while rate limits are waited out
+// opts.waits: { rateLimitRetries, waitMs }, counted up while rate limits are waited out.
+// opts.retries: how many 429s to wait out (RETRIES by default). A failed answer's error carries its upstreamStatus.
 async function request(pathname, opts = {}) {
+  const retries = opts.retries ?? RETRIES;
   for (let attempt = 0; ; attempt++) {
     const { res, data, text } = await send(pathname, opts);
-    if (res.status === 429 && attempt < RETRIES) {
+    if (res.status === 429 && attempt < retries) {
       const delay = retryDelay(res, attempt);
       if (opts.waits) {
         opts.waits.rateLimitRetries++;
@@ -47,15 +50,15 @@ async function request(pathname, opts = {}) {
       const msg = data?.error?.message || text;
       // 401 bad key, 402 no credits: nothing will work until the account is fixed
       const code = res.status === 401 || res.status === 402 ? 'llm_unavailable' : 'llm_error';
-      throw new LLMError(code, `OpenRouter ${res.status}: ${String(msg).slice(0, 300)}`);
+      throw Object.assign(new LLMError(code, `OpenRouter ${res.status}: ${String(msg).slice(0, 300)}`), { upstreamStatus: res.status });
     }
     if (!data) throw new LLMError('llm_error', 'OpenRouter returned a non-JSON response');
     return data;
   }
 }
 
-async function send(pathname, { method = 'GET', body, timeout = timeoutMs(), auth = true } = {}) {
-  if (auth && !apiKey()) throw new LLMError('llm_unavailable', 'OPENROUTER_API_KEY is not set in .env');
+async function send(pathname, { method = 'GET', body, timeout = timeoutMs() } = {}) {
+  if (!apiKey()) throw new LLMError('llm_unavailable', 'OPENROUTER_API_KEY is not set in .env');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   let res;
@@ -64,7 +67,7 @@ async function send(pathname, { method = 'GET', body, timeout = timeoutMs(), aut
     res = await fetch(baseUrl() + pathname, {
       method,
       headers: {
-        ...(auth ? { Authorization: `Bearer ${apiKey()}` } : {}),
+        Authorization: `Bearer ${apiKey()}`,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         'X-Title': appName, // shows the app in the OpenRouter activity log
       },
@@ -84,65 +87,26 @@ async function send(pathname, { method = 'GET', body, timeout = timeoutMs(), aut
   return { res, data, text };
 }
 
-// The models chosen in .env: OPENROUTER_MODEL, plus any extra choices in OPENROUTER_MODELS (comma-separated).
-// OpenRouter's catalog is read only for their prices (per million tokens); an id it doesn't know is
-// still listed, and OpenRouter's error will name the problem when it's used.
-// OpenRouter's public model catalog (prices, supported parameters), cached; null if unreachable.
-let catalogCache = { at: 0, map: null };
-async function catalog() {
-  if (catalogCache.map && Date.now() - catalogCache.at < MODELS_TTL) return catalogCache.map;
-  try {
-    const map = new Map(((await request('/models', { auth: false, timeout: 15000 })).data || []).map((m) => [m.id, m]));
-    catalogCache = { at: Date.now(), map };
-    return map;
-  } catch {
-    return null;
-  }
-}
-
-async function listModels() {
-  const extra = (process.env.OPENROUTER_MODELS || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const ids = [...new Set([defaultModel(), ...extra])];
-  const known = await catalog(); // prices are a nicety
-  const perMillion = (v) => Math.round(Number(v || 0) * 1e8) / 100;
-  return ids.map((id) => {
-    const m = known?.get(id);
-    return m ? { name: id, price: { in: perMillion(m.pricing?.prompt), out: perMillion(m.pricing?.completion) } } : { name: id };
-  });
-}
-
-// { reasoning: { effort } } for a model that supports that effort, else nothing.
-async function reasoningFor(model) {
-  const effort = reasoningEffort();
-  if (effort === 'default') return {};
-  const m = (await catalog())?.get(model);
-  if (!(m?.supported_parameters || []).includes('reasoning')) return {};
-  const efforts = m.reasoning?.supported_efforts;
-  return !efforts || efforts.includes(effort) ? { reasoning: { effort } } : {};
-}
-
-// Checks the key, not just the network.
+// Checks the key, not just the network. One try: a health check doesn't wait out a rate limit, and a 429
+// still means the key works (calls wait their turn).
 async function ping() {
-  await request('/key', { timeout: 5000 });
+  try {
+    await request('/key', { timeout: 5000, retries: 0 });
+  } catch (err) {
+    if (err.upstreamStatus !== 429) throw err;
+  }
   return true;
 }
 
 // What a call used, from the answer's usage block: completion tokens include reasoning. The cost is what
-// OpenRouter charged (USD); when it doesn't say, it comes from the model's listed prices (null if unknown).
-async function usageOf(model, u = {}) {
-  const inputTokens = u.prompt_tokens ?? null;
-  const outputTokens = u.completion_tokens ?? null;
-  let cost = typeof u.cost === 'number' ? u.cost : null;
-  if (cost === null && inputTokens !== null) {
-    const price = (await catalog())?.get(model)?.pricing;
-    if (price) cost = inputTokens * Number(price.prompt || 0) + (outputTokens || 0) * Number(price.completion || 0);
-  }
+// OpenRouter charged (USD), null if it didn't say.
+function usageOf(u = {}) {
   return {
-    inputTokens,
-    outputTokens,
+    inputTokens: u.prompt_tokens ?? null,
+    outputTokens: u.completion_tokens ?? null,
     reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
     cachedTokens: u.prompt_tokens_details?.cached_tokens ?? 0,
-    cost,
+    cost: typeof u.cost === 'number' ? u.cost : null,
   };
 }
 
@@ -150,6 +114,7 @@ async function usageOf(model, u = {}) {
 // waits as err.usage.
 async function chat({ model, messages, temperature = 0.7 }) {
   const waits = { rateLimitRetries: 0, waitMs: 0 };
+  const effort = reasoningOf(model);
   let data;
   try {
     data = await request('/chat/completions', {
@@ -161,7 +126,7 @@ async function chat({ model, messages, temperature = 0.7 }) {
         max_tokens: maxTokens(),
         response_format: { type: 'json_object' },
         usage: { include: true }, // tokens and cost in the answer
-        ...(await reasoningFor(model)),
+        ...(effort ? { reasoning: { effort } } : {}),
       },
       waits,
     });
@@ -169,13 +134,13 @@ async function chat({ model, messages, temperature = 0.7 }) {
     err.usage = waits;
     throw err;
   }
-  return { text: data.choices?.[0]?.message?.content ?? '', usage: { ...(await usageOf(model, data.usage)), ...waits } };
+  return { text: data.choices?.[0]?.message?.content ?? '', usage: { ...usageOf(data.usage), ...waits } };
 }
 
-// Hosted models are always loaded.
-async function warmup() {}
-
 // What changes a call's cost besides the model, kept with each AI action for the usage report
-const settings = () => ({ reasoning: reasoningEffort(), maxTokens: maxTokens() });
+function settings(model) {
+  const effort = reasoningOf(model);
+  return { ...(effort ? { reasoning: effort } : {}), maxTokens: maxTokens() };
+}
 
-module.exports = { listModels, ping, chat, warmup, defaultModel, concurrency, settings };
+module.exports = { listModels, ping, chat, defaultModel, guestModel, concurrency, settings };

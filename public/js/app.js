@@ -1,5 +1,5 @@
 // Single-page brainstorm client (vanilla JS).
-import { BRANCHES, COLORS, t, errorText, applyStatic, setProvider, llmDownText } from './i18n.js';
+import { BRANCHES, COLORS, t, errorText, applyStatic } from './i18n.js';
 import { createGraph } from './graph.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -10,8 +10,6 @@ const state = {
   sessions: [],
   sessionQuery: '', // sidebar search box
   session: null,
-  modelWarm: false,
-  warming: false,
   busy: new Set(), // 'words', 'branch:who', 'word:<id>', 'acronyms', 'acronymDomains' (a run's domain checks)
   langHint: false,
   sort: 'score',
@@ -116,7 +114,7 @@ function fail(err) {
 }
 
 // ---------------------------------------------------------------------------
-// Health, models, warm-up
+// Health, models
 
 async function checkHealth() {
   try {
@@ -124,7 +122,6 @@ async function checkHealth() {
   } catch {
     state.health = { db: false, llm: false, defaultModel: '' };
   }
-  setProvider(state.health.provider);
   renderBanners();
   watchDb();
 }
@@ -137,7 +134,7 @@ function recheckHealth() {
     const hadLlm = state.health.llm;
     await checkHealth();
     if (!hadDb && state.health.db) await boot({ skipHealth: true });
-    else if (!hadLlm && state.health.llm) { await loadModels(); renderBusy(); warmup(); }
+    else if (!hadLlm && state.health.llm) { await loadModels(); renderBusy(); }
   })().finally(() => { rechecking = null; });
   return rechecking;
 }
@@ -163,23 +160,6 @@ async function loadModels() {
 }
 
 const currentModel = () => state.session?.model || state.health.defaultModel || '';
-
-let warmToken = 0;
-async function warmup() {
-  if (!state.health.llm) return;
-  const token = ++warmToken;
-  state.warming = true;
-  state.modelWarm = false;
-  renderBanners();
-  try {
-    await api('POST', '/llm/warmup', { model: currentModel() });
-    if (token === warmToken) state.modelWarm = true;
-  } catch (err) {
-    if (token === warmToken) fail(err);
-  } finally {
-    if (token === warmToken) { state.warming = false; renderBanners(); }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Sessions
@@ -215,7 +195,6 @@ async function openSession(id, { push = true } = {}) {
   const prev = state.session;
   try {
     const { session } = await api('GET', `/sessions/${id}`);
-    const prevModel = currentModel();
     state.session = session;
     // Leaving a blank session drops it; if the delete fails, the next list load sweeps it
     if (prev && prev._id !== id && isBlank(prev)) {
@@ -230,7 +209,6 @@ async function openSession(id, { push = true } = {}) {
     if (push) setUrl(id);
     renderAll({ resetGraph: true });
     closeDrawer();
-    if (currentModel() !== prevModel || !state.modelWarm) warmup();
   } catch (err) {
     // Arriving by address or Back at a session that's gone (often a blank one, swept): open the newest, no error
     if (push || err.status !== 404) fail(err);
@@ -479,10 +457,6 @@ const answerLength = (b) => answerText(b).replace(/\s/g, '').length;
 const hasAnswer = (b) => answerLength(b) >= ANSWER_MIN;
 const answerTooShort = (b) => { const n = answerLength(b); return n > 0 && n < ANSWER_MIN; };
 
-function llmBusyMessage(key) {
-  return state.modelWarm ? t(key) : t('loadingCold');
-}
-
 async function withBusy(key, fn) {
   if (state.busy.has(key)) return;
   state.busy.add(key);
@@ -525,7 +499,6 @@ async function expandBranches(branches, { all = false, chain = false } = {}) {
     const data = await api('POST', `/sessions/${sid}/expand`, branches.length === 1 ? { branches } : {});
     state.usage = data.usage;
     if (state.session?._id !== sid) return;
-    state.modelWarm = true;
     // First AI title of the session (the server makes it only once). A rename typed while it ran is newer: keep and resave it.
     if (data.title) {
       state.session.aiTitle = data.title;
@@ -554,7 +527,6 @@ async function expandWord(id) {
     const data = await api('POST', `/sessions/${sid}/words/${id}/expand`);
     state.usage = data.usage;
     if (state.session?._id !== sid) return;
-    state.modelWarm = true;
     addWords(data.words);
     toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
   });
@@ -648,7 +620,6 @@ async function generateAcronyms({ first = false } = {}) {
     });
     state.usage = data.usage;
     if (state.session?._id !== sid) return;
-    state.modelWarm = true;
     // A first run's acronyms are all new: the tag only tells a run's from the ones before it
     const before = state.session.acronyms.length || state.session.lockedAcronyms;
     state.newAcronyms = new Set(before ? data.acronyms.map((a) => a._id) : []);
@@ -814,8 +785,7 @@ function renderAll({ resetGraph = false } = {}) {
 function renderBanners() {
   show($('#banner-db'), !state.health.db);
   show($('#banner-llm'), state.health.db !== undefined && !state.health.llm);
-  $('#banner-llm-text').textContent = llmDownText();
-  show($('#banner-warmup'), state.health.llm && state.warming);
+  $('#banner-llm-text').textContent = t('llmDown');
   show($('#banner-lang'), !!state.session && state.langHint);
   if (state.session) $('#banner-lang-text').textContent = t('langHint', { lang: t(`lang_${state.session.language}`) });
   $('#new-session').disabled = !state.health.db;
@@ -975,22 +945,17 @@ function startRename(li, s) {
 function renderModelSelect() {
   const sel = $('#model');
   const names = state.models.map((m) => m.name);
-  // A model the provider doesn't offer (an Ollama one after switching to OpenRouter) shows as the
-  // default, which is also what the server falls back to.
+  // A model the platform no longer offers (dropped from config/models.js, or an old session's Ollama one)
+  // shows as the default, which is also what the server falls back to.
   let current = currentModel();
   if (names.length && !names.includes(current)) current = state.health.defaultModel;
-  // Guests may use only the cheapest model: the others are listed but disabled, and the session shows that one
+  // Guests may use only the guest model: the others are listed but disabled, and the session shows that one
   const allowed = state.models.filter((m) => m.allowed !== false).map((m) => m.name);
   if (allowed.length && !allowed.includes(current)) current = allowed[0];
   if (current && !names.includes(current)) names.unshift(current);
-  const usd = (n) => (n ? `$${n}` : 'free');
   sel.replaceChildren(...names.map((n) => {
-    const m = state.models.find((x) => x.name === n);
-    // Ollama: size on disk. OpenRouter: price per million tokens, input / output.
-    const detail = m?.size ? ` (${(m.size / 1e9).toFixed(1)} GB)`
-      : m?.price ? ` (${usd(m.price.in)} / ${usd(m.price.out)} per M)` : '';
-    const locked = m?.allowed === false;
-    return h('option', { value: n, text: n + detail + (locked ? ` · ${t('modelSignUp')}` : ''), disabled: locked });
+    const locked = state.models.find((x) => x.name === n)?.allowed === false;
+    return h('option', { value: n, text: n + (locked ? ` · ${t('modelSignUp')}` : ''), disabled: locked });
   }));
   sel.value = current;
   sel.disabled = !state.health.llm || !state.session;
@@ -1058,7 +1023,6 @@ async function reformulateAnswer(b) {
     const data = await api('POST', `/sessions/${sid}/answers/${b}/reformulate`);
     state.usage = data.usage;
     if (state.session?._id !== sid) return;
-    state.modelWarm = true;
     if (data.answer === answerText(b)) {
       toast(t('reformulateSame'), 'info');
       return;
@@ -1862,7 +1826,7 @@ function renderPanel() {
         header,
         panelButton(w.selected ? t('deselect') : t('select'), w.selected ? 'checkbox' : 'checkbox-checked', () => patchWord(w._id, { selected: !w.selected })),
         panelButton(t('rename'), 'edit', () => { p.mode = 'rename'; renderPanel(); $('#panel input')?.select(); }),
-        panelBusyButton(t('expand'), 'git-branch', llmBusyMessage('expanding'), busy, !llm, () => expandWord(w._id)),
+        panelBusyButton(t('expand'), 'git-branch', t('expanding'), busy, !llm, () => expandWord(w._id)),
         panelButton(t('delete'), 'trash', () => deleteWord(w._id), { danger: true }),
       ];
     }
@@ -1879,7 +1843,7 @@ function renderPanel() {
     } else {
       content = [
         header,
-        panelBusyButton(t('moreWords'), 'sparkles', llmBusyMessage('generatingWords'), state.busy.has(`branch:${b}`), !llm || busy || !hasAnswer(b), () => expandBranches([b])),
+        panelBusyButton(t('moreWords'), 'sparkles', t('generatingWords'), state.busy.has(`branch:${b}`), !llm || busy || !hasAnswer(b), () => expandBranches([b])),
         panelButton(t('addWord'), 'plus', () => { p.mode = 'add'; renderPanel(); $('#panel input')?.focus(); }),
         panelButton(t('selectAll'), 'check-square', () => bulkSelect(b, true), { disabled: !branchWords.length }),
         panelButton(t('deselectAll'), 'square', () => bulkSelect(b, false), { disabled: !branchWords.length }),
@@ -1997,13 +1961,12 @@ function bindStatic() {
   $('#model').addEventListener('change', (e) => {
     state.session.model = e.target.value;
     queueSave({ model: e.target.value });
-    warmup();
   });
 
   $('#banner-lang-close').addEventListener('click', () => { state.langHint = false; renderBanners(); });
   document.querySelectorAll('.banner-retry').forEach((b) => b.addEventListener('click', async () => {
     await recheckHealth();
-    if (!state.health.db || !state.health.llm) toast(state.health.db ? llmDownText() : t('dbDown'));
+    if (!state.health.db || !state.health.llm) toast(t(state.health.db ? 'llmDown' : 'dbDown'));
   }));
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.health.db) recheckHealth(); });
 
@@ -2083,7 +2046,6 @@ async function boot({ skipHealth = false } = {}) {
     if (!sessionIdFromUrl() && state.session) setUrl(state.session._id, true);
   } else {
     renderAll({ resetGraph: true });
-    warmup();
   }
   booted = true;
   syncPanel();

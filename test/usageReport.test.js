@@ -92,12 +92,12 @@ test('the report has every section, its waste, and a marker for the next one', (
     action('words', 'free', [call('words', 0.001, { ok: false, error: 'llm_timeout', cost: null }), call('words', 0.002, { retry: true, rateLimitRetries: 2, waitMs: 4000 })], { counted: false }),
   ];
   const until = new Date('2026-10-22T12:00:00Z');
-  const md = report.build(actions, { label: 'luna, low', until, models: [{ name: 'openai/gpt-6-luna', price: { in: 0.1, out: 0.5 } }] });
+  const md = report.build(actions, { label: 'luna, low', until });
   for (const h of ['Per step', 'Per click', 'Where the output goes', 'Spent without a result', 'One usage window per plan', 'One user for a month', 'Paid plan price']) {
     assert.ok(md.includes(`### ${h}`), h);
   }
   assert.match(md, /^## \d{4}-\d\d-\d\d \d\d:\d\d · luna, low/);
-  assert.match(md, /openai\/gpt-6-luna \(\$0\.10 in, \$0\.50 out per million tokens\)/);
+  assert.match(md, /\*\*Models:\*\* openai\/gpt-6-luna\n/);
   assert.match(md, /card fees \(2\.9% \+ \$0\.30\)/);
   assert.match(md, /openrouter, reasoning low, max output 4096/);
   assert.match(md, /\| Generate acronyms \(real words only\) \| paid \| 1 \| 0 \| 2\.0 \| \$0\.12 \|/);

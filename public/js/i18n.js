@@ -67,11 +67,9 @@ const STRINGS = {
   saving: 'Saving…',
   saved: 'Saved',
   saveError: 'Save failed',
-  llmDown: 'Local LLM unavailable (Ollama). You can still add words by hand.',
-  llmDownOpenRouter: 'OpenRouter unavailable: check OPENROUTER_API_KEY in .env and your credits. You can still add words by hand.',
+  llmDown: 'OpenRouter unavailable: check OPENROUTER_API_KEY in .env and your credits. You can still add words by hand.',
   dbDown: 'Database unavailable (MongoDB). Nothing is saved.',
   retry: 'Retry',
-  modelLoading: 'Loading model… up to a minute.',
   langHint: 'New words will be in {lang}. Existing words stay.',
   lang_fr: 'French',
   lang_en: 'English',
@@ -100,7 +98,6 @@ const STRINGS = {
   moreWordsNeedAnswer: 'More words: the answer needs at least {min} characters',
   regenerate: 'More words',
   generatingWords: 'Generating words…',
-  loadingCold: 'Loading the model — the first request can take up to a minute.',
   wordsAdded: '{n} word(s) added.',
   noNewWords: 'No new words (all already present).',
   branchFailed: 'Failed for “{branch}”: {message}',
@@ -191,8 +188,7 @@ const STRINGS = {
   lengthError: 'Min length must be ≤ max length (between 2 and 8).',
   errors: {
     database_unavailable: 'Database unavailable.',
-    llm_unavailable: 'Local LLM unavailable — is Ollama running?',
-    llm_unavailable_openrouter: 'OpenRouter unavailable — check OPENROUTER_API_KEY in .env and your credits.',
+    llm_unavailable: 'OpenRouter unavailable — check OPENROUTER_API_KEY in .env and your credits.',
     llm_timeout: 'The model took too long to answer.',
     llm_error: 'Model error.',
     invalid_json: 'The model returned an unreadable answer. Try again.',
@@ -228,16 +224,6 @@ export function t(key, vars = {}) {
   return str.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
 }
 
-// Some messages depend on the LLM provider (ollama | openrouter), set from /api/health.
-let provider = 'ollama';
-export function setProvider(name) {
-  provider = name || 'ollama';
-}
-
-export function llmDownText() {
-  return t(provider === 'openrouter' ? 'llmDownOpenRouter' : 'llmDown');
-}
-
 // "No acronym runs left for now. More at 14:30.", plus the way to more for guests and free users
 // (not for reformulations: every account gets the same)
 function usageLimitText({ kind, resetAt, plan } = {}) {
@@ -251,7 +237,7 @@ export function errorText(err) {
   const code = err?.code;
   if (code === 'usage_limit') return usageLimitText(err.data);
   if (code === 'upgrade_required') return STRINGS.errors[`upgrade_${err.data?.feature}`] || err.message;
-  const known = code && (STRINGS.errors[`${code}_${provider}`] || STRINGS.errors[code]);
+  const known = code && STRINGS.errors[code];
   return known || err?.message || STRINGS.errors.generic;
 }
 

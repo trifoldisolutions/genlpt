@@ -8,9 +8,14 @@ const mongoose = require('mongoose');
 const brand = require('./config/brand');
 const limits = require('./config/limits');
 const { sessions, loadUser } = require('./middleware/auth');
+const { securityHeaders } = require('./middleware/headers');
+const { requestLog } = require('./middleware/requestLog');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
+
+// Don't tell visitors the server runs Express (helmet would remove the header; this stops it being set at all)
+app.disable('x-powered-by');
 
 // Behind proxies that terminate HTTPS (most hosts), Express must trust them: the login cookie is only set
 // over HTTPS, and rate limits need the visitor's real IP. Only a count of proxies is accepted: trusting
@@ -29,10 +34,13 @@ app.locals.appName = brand.appName;
 app.locals.brand = brand;
 app.locals.limits = limits;
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(securityHeaders());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor/cytoscape', express.static(path.join(__dirname, 'node_modules/cytoscape/dist')));
+// After static files, so only pages and API calls are logged; before the body parsers, so malformed bodies are too
+app.use(requestLog());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 // Signed-in user: req.user for routes, res.locals.user ({ name, email, … } or null) for views
 app.use(sessions, loadUser);
@@ -42,7 +50,6 @@ const facades = [
   { name: 'Public', mount: '/', router: require('./routes/public') },
   { name: 'App', mount: '/app', router: require('./routes/app') },
   { name: 'Admin', mount: '/admin', router: require('./routes/admin') },
-  { name: 'Dev', mount: '/dev-resources', router: require('./routes/tasks') },
   { name: 'API', mount: '/api', router: require('./routes/api') },
 ];
 
@@ -61,6 +68,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   if (req.path.startsWith('/api/')) {
+    if (status >= 500) console.error('[api]', err);
     const error = err.type === 'entity.parse.failed' ? 'invalid_json' : status >= 500 ? 'server_error' : 'bad_request';
     return res.status(status).json({ error, message: status >= 500 ? 'Unexpected server error' : err.message });
   }

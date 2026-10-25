@@ -35,6 +35,14 @@ test('links in emails come from APP_URL, never from a request', () => {
   process.env.APP_URL = before;
 });
 
+test('without APP_URL, email links follow PORT (dev, where the port can change)', (t) => {
+  const env = { ...process.env };
+  t.after(() => { process.env = env; });
+  process.env.APP_URL = '';
+  process.env.PORT = '4321';
+  assert.equal(link('/app/verify?token=t'), 'http://localhost:4321/app/verify?token=t');
+});
+
 test('sending: Resend gets the email when there is a key; without one it is printed (not in production)', async (t) => {
   const env = { ...process.env };
   t.after(() => { process.env = env; });
