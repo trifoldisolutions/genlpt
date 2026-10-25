@@ -58,7 +58,7 @@ test('openrouter: no key means unavailable, before any request', async () => {
 
 test('openrouter: chat sends the key, the model and JSON mode, and returns the text', async () => {
   const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': CHAT });
-  const text = await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [{ role: 'user', content: 'hi' }], temperature: 0.3 });
+  const { text } = await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [{ role: 'user', content: 'hi' }], temperature: 0.3 });
   assert.equal(text, '{"names": ["Federal Bureau of Investigation"]}');
   calls.splice(0, calls.length, ...calls.filter((c) => c.url.endsWith('/chat/completions'))); // the catalog is read first
   assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
@@ -94,13 +94,15 @@ test('openrouter: a rate limit (429) is waited out and retried', async () => {
   const limited = [429, { error: { message: 'Rate limit exceeded' } }, { 'retry-after': '0' }];
   const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test', OPENROUTER_RETRY_MS: '5' }, { '/chat/completions': { seq: [limited, limited, CHAT] } });
   const started = Date.now();
-  const text = await openrouter.chat({ model: 'x', messages: [] });
+  const { text, usage } = await openrouter.chat({ model: 'x', messages: [] });
   assert.ok(Date.now() - started >= 15); // waited 5 + 10 ms despite "Retry-After: 0"
   assert.match(text, /Federal Bureau/);
+  assert.equal(usage.rateLimitRetries, 2); // the waits are part of what the call used
+  assert.ok(usage.waitMs >= 15);
   const chats = (list) => list.filter((c) => c.url.endsWith('/chat/completions')).length;
   assert.equal(chats(calls), 3);
   const stuck = load({ OPENROUTER_API_KEY: 'sk-test', OPENROUTER_RETRY_MS: '1' }, { '/chat/completions': { seq: Array(6).fill(limited) } });
-  await assert.rejects(stuck.openrouter.chat({ model: 'x', messages: [] }), { code: 'llm_error', message: /429/ });
+  await assert.rejects(stuck.openrouter.chat({ model: 'x', messages: [] }), (err) => err.code === 'llm_error' && /429/.test(err.message) && err.usage.rateLimitRetries === 5);
   assert.equal(chats(stuck.calls), 6); // first try + 5 retries
 });
 
@@ -124,6 +126,47 @@ test('openrouter: the dropdown offers the .env model (plus OPENROUTER_MODELS), p
   ]);
   ({ openrouter } = load({ OPENROUTER_MODEL: 'openai/gpt-6-luna' }, {})); // catalog unreachable: still listed, no price
   assert.deepEqual(await openrouter.listModels(), [{ name: 'openai/gpt-6-luna' }]);
+});
+
+test('openrouter: chat returns what it used: tokens, reasoning, cache, and the cost charged', async () => {
+  const usage = { prompt_tokens: 1200, completion_tokens: 300, cost: 0.0042, prompt_tokens_details: { cached_tokens: 1000 }, completion_tokens_details: { reasoning_tokens: 180 } };
+  const { openrouter, calls } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/chat/completions': [200, { ...CHAT[1], usage }] });
+  const out = await openrouter.chat({ model: 'openai/gpt-6-luna', messages: [] });
+  assert.deepEqual(out.usage, { inputTokens: 1200, outputTokens: 300, reasoningTokens: 180, cachedTokens: 1000, cost: 0.0042, rateLimitRetries: 0, waitMs: 0 });
+  assert.deepEqual(calls.find((c) => c.body).body.usage, { include: true });
+  assert.deepEqual(openrouter.settings(), { reasoning: 'low', maxTokens: 4096 });
+});
+
+test('openrouter: without a charged cost, the cost comes from the listed prices', async () => {
+  const usage = { prompt_tokens: 1000, completion_tokens: 200 };
+  const { openrouter } = load({ OPENROUTER_API_KEY: 'sk-test' }, { '/models': MODELS, '/chat/completions': [200, { ...CHAT[1], usage }] });
+  const { usage: used } = await openrouter.chat({ model: 'anthropic/claude-sonnet-5.5', messages: [] });
+  assert.ok(Math.abs(used.cost - (1000 * 0.000002 + 200 * 0.00001)) < 1e-12);
+  const unknown = await openrouter.chat({ model: 'some/unknown-model', messages: [] });
+  assert.equal(unknown.usage.cost, null);
+});
+
+test('chatJSON records every call on the current meter, JSON retries and failures included; none outside one', async () => {
+  const meter = require('../services/llm/meter');
+  const usage = { prompt_tokens: 100, completion_tokens: 20, cost: 0.001 };
+  const prose = [200, { choices: [{ message: { content: 'Sure! Here are names.' } }], usage }];
+  const { llm } = load(
+    { LLM_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test' },
+    { '/models': MODELS, '/chat/completions': { seq: [prose, [200, { ...CHAT[1], usage }], [500, { error: { message: 'Upstream error' } }], [200, CHAT[1]]] } },
+  );
+  const m = { calls: [] };
+  await meter.run(m, async () => {
+    await llm.chatJSON({ user: 'x', step: 'rank' });
+    await assert.rejects(llm.chatJSON({ user: 'x', step: 'compose' }), { code: 'llm_error' });
+  });
+  assert.deepEqual(m.calls.map((c) => [c.step, c.retry, c.ok]), [['rank', false, true], ['rank', true, true], ['compose', false, false]]);
+  assert.equal(m.calls[0].model, 'anthropic/claude-sonnet-5.5');
+  assert.equal(m.calls[1].cost, 0.001);
+  assert.equal(m.calls[2].error, 'llm_error');
+  assert.ok(m.calls.every((c) => typeof c.ms === 'number'));
+  assert.deepEqual(meter.totals(m.calls), { cost: 0.002, inputTokens: 200, outputTokens: 40, reasoningTokens: 0 });
+  await llm.chatJSON({ user: 'x', step: 'rank' }); // no meter: nothing kept, nothing thrown
+  assert.equal(m.calls.length, 3);
 });
 
 test('a session model the provider does not offer falls back to its default', async () => {

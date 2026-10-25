@@ -1,10 +1,10 @@
 // Cytoscape wrapper: root → 4 branches → words (and child words). Updated incrementally.
 import { BRANCHES, COLORS } from './i18n.js';
 
+// Runs synchronously (animate: false); the motion afterwards is ours, see animateFrom().
 const LAYOUT = {
   name: 'cose',
-  animate: true,
-  animationDuration: 500,
+  animate: false,
   randomize: false,
   nodeDimensionsIncludeLabels: true,
   idealEdgeLength: () => 60,
@@ -14,6 +14,19 @@ const LAYOUT = {
   numIter: 1200,
   padding: 30,
 };
+
+// After a layout, nodes that were already shown glide to their new spots; new ones grow out of their
+// parent: the root pops in, then each level follows once its parent has (nearly) arrived.
+const MOTION = {
+  glide: 450,
+  pop: 380,
+  grow: 420,
+  step: 260, // a child starts this long after its parent
+  sibling: 45, // stagger between siblings, swept around their parent from 12 o'clock...
+  spread: 220, // ...squeezed to fit this window when there are many
+};
+const POP_EASING = 'cubic-bezier(0.34, 1.56, 0.64, 1)'; // slight overshoot
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
 const FONT = '"SUSE", ui-sans-serif, system-ui, sans-serif';
 // Type scale shared with the CSS theme (--type-base / --type-ratio in src/input.css).
@@ -110,6 +123,8 @@ function style() {
     { selector: '.faded', style: { opacity: 0.12 } },
     { selector: '.dim', style: { opacity: 0.12 } },
     { selector: 'node.hl, node.active', style: { 'border-width': 2, 'border-color': INK.brand, 'border-opacity': 1, 'z-index': 10 } },
+    // Added but not revealed yet; last so it beats .faded / .dim / .near.
+    { selector: '.unborn', style: { opacity: 0, events: 'no' } },
   ];
 }
 
@@ -134,11 +149,11 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     autounselectify: true,
   });
 
-  cy.add({ data: { id: 'root', type: 'root', label: '' }, position: { x: 0, y: 0 } });
+  cy.add({ data: { id: 'root', type: 'root', label: '' }, classes: 'unborn', position: { x: 0, y: 0 } });
   BRANCHES.forEach((b, i) => {
     const angle = (Math.PI / 2) * i - Math.PI / 4;
-    cy.add({ data: { id: `b-${b}`, type: 'branch', branch: b, color: COLORS[b], label: b }, position: { x: Math.cos(angle) * 160, y: Math.sin(angle) * 160 } });
-    cy.add({ data: { id: `e-b-${b}`, source: 'root', target: `b-${b}`, color: COLORS[b] } });
+    cy.add({ data: { id: `b-${b}`, type: 'branch', branch: b, color: COLORS[b], label: b }, classes: 'unborn', position: { x: Math.cos(angle) * 160, y: Math.sin(angle) * 160 } });
+    cy.add({ data: { id: `e-b-${b}`, source: 'root', target: `b-${b}`, color: COLORS[b] }, classes: 'unborn' });
   });
 
   // A long-press opens the menu; ignore the tap that may follow it.
@@ -187,7 +202,7 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     const eles = cy.elements();
     if (eles.empty() || !cy.width() || !cy.height()) return;
     const r = visibleRect();
-    const bb = eles.boundingBox();
+    const bb = motion?.box || eles.boundingBox(); // mid-motion, fit where nodes are headed
     const pad = Math.min(padding, r.w / 6, r.h / 6);
     const zoomFit = Math.min((r.w - 2 * pad) / Math.max(bb.w, 1), (r.h - 2 * pad) / Math.max(bb.h, 1));
     const zoom = Math.max(cy.minZoom(), Math.min(1.6, cy.maxZoom(), zoomFit));
@@ -203,19 +218,97 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
   }
 
   let firstLayout = true;
-  let layout = null;
   let fontsReady = false;
   let queued = null;
+  let motion = null; // { timers, end: Map<id, position>, born, box } while nodes are moving
 
+  // Lay out to the final positions, fit the view to them, then animate there from where nodes were.
   function runLayout({ fit = false } = {}) {
     if (!fontsReady) { queued = { fit: fit || !!queued?.fit }; return; }
-    layout?.stop();
+    settle();
     const doFit = fit || firstLayout || !userMoved;
-    if (firstLayout) fitToVisible({ animate: false }); // start centered, not at the canvas origin
-    layout = cy.layout({ ...LAYOUT, fit: false });
-    if (doFit) layout.one('layoutstop', () => fitToVisible());
-    layout.run();
+    const from = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
+    cy.layout({ ...LAYOUT, fit: false }).run();
+    if (doFit) fitToVisible({ animate: !firstLayout });
     firstLayout = false;
+    animateFrom(from);
+  }
+
+  // From 12 o'clock around `center`: dir 1 clockwise, -1 anti-clockwise.
+  function sweep(nodes, center, dir) {
+    const TAU = Math.PI * 2;
+    const turn = (n) => {
+      const p = n.position();
+      const a = dir * (Math.atan2(p.y - center.y, p.x - center.x) + Math.PI / 2);
+      return ((a % TAU) + TAU) % TAU;
+    };
+    return nodes.toArray().sort((a, b) => turn(a) - turn(b));
+  }
+
+  function animateFrom(from) {
+    const born = cy.elements('.unborn');
+    if (reducedMotion?.matches) { born.removeClass('unborn'); return; }
+    const end = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
+    const m = { timers: [], end, born, box: cy.elements().boundingBox() };
+    motion = m;
+    let total = 0;
+
+    let glided = false;
+    cy.nodes().not(born).forEach((n) => {
+      const a = from.get(n.id());
+      const b = end.get(n.id());
+      if (!a || (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5)) return;
+      n.position(a).animate({ position: b }, { duration: MOTION.glide, easing: 'ease-in-out-cubic' });
+      glided = true;
+    });
+    if (glided) total = MOTION.glide;
+
+    // A born node stays hidden at its final spot until its turn, then starts from its parent's
+    // current position (or, for the root, from a dot) and moves out with its edge trailing behind.
+    const reveal = (n, parent) => {
+      if (cy.destroyed() || n.removed()) return;
+      cy.batch(() => n.add(n.incomers('edge')).removeClass('unborn'));
+      if (parent) {
+        n.position({ ...parent.position() }).animate({ position: end.get(n.id()) }, { duration: MOTION.grow, easing: 'ease-out-cubic' });
+        return;
+      }
+      const size = { width: n.numericStyle('width'), height: n.numericStyle('height'), 'border-width': n.numericStyle('border-width') };
+      n.style({ width: 2, height: 2, 'border-width': 0 })
+        .animate({ style: size }, { duration: MOTION.pop, easing: POP_EASING, complete: () => n.removeStyle('width height border-width') });
+    };
+    const visitKids = (p, t) => {
+      // The four branches open clockwise around the root; the words around them anti-clockwise.
+      const kids = sweep(p.outgoers('node').filter('.unborn'), end.get(p.id()), p.id() === 'root' ? 1 : -1);
+      const gap = kids.length > 1 ? Math.min(MOTION.sibling, MOTION.spread / (kids.length - 1)) : 0;
+      kids.forEach((k, i) => visit(k, t + i * gap, p));
+    };
+    const visit = (n, t, parent) => {
+      m.timers.push(setTimeout(() => reveal(n, parent), t));
+      total = Math.max(total, t + (parent ? MOTION.grow : MOTION.pop));
+      visitKids(n, t + MOTION.step);
+    };
+    // New words under nodes that were already shown sprout once those have nearly settled.
+    const sprout = glided ? MOTION.glide * 0.8 : 0;
+    cy.nodes().forEach((n) => {
+      if (!n.hasClass('unborn')) visitKids(n, sprout);
+      else if (n.incomers('node').empty()) visit(n, 0, null);
+    });
+
+    m.timers.push(setTimeout(() => { if (motion === m) motion = null; }, total + 50));
+  }
+
+  // Jump any running motion to its end state.
+  function settle() {
+    if (!motion) return;
+    const m = motion;
+    motion = null;
+    m.timers.forEach(clearTimeout);
+    cy.batch(() => {
+      cy.nodes().stop(true);
+      m.end.forEach((p, id) => cy.getElementById(id).position(p));
+      m.born.removeClass('unborn');
+      cy.getElementById('root').removeStyle('width height border-width');
+    });
   }
 
   fontsLoaded().then(() => {
@@ -263,10 +356,10 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
             const p = cy.getElementById(parent).position();
             cy.add({
               data: { id, type: 'word', branch: w.branch, color: COLORS[w.branch], label: w.text },
-              classes: w.selected ? '' : 'off',
+              classes: w.selected ? 'unborn' : 'off unborn',
               position: { x: p.x + (Math.random() - 0.5) * 80, y: p.y + (Math.random() - 0.5) * 80 },
             });
-            cy.add({ data: { id: `e-${id}`, source: parent, target: id, color: COLORS[w.branch] } });
+            cy.add({ data: { id: `e-${id}`, source: parent, target: id, color: COLORS[w.branch] }, classes: 'unborn' });
             added++;
           }
           placed.add(id);

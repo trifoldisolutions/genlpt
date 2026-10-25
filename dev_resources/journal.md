@@ -7,6 +7,69 @@ Entry template:
 - **HH:MM** — What changed
 -->
 
+## 2026-10-25
+- **09:24** — Fixed body-parser DoS (GHSA-27r3-jxmh-p828) via npm audit fix: 2.3.0 → 2.4.0. A gzip body with trailing bytes can no longer crash the server.
+  - Modified: `package-lock.json`
+- **09:24** — npm audit fix also patched dev-only shell-quote (concurrently), source-map-js (Tailwind CLI) and qs. npm audit: 0 issues; 83 tests pass.
+  - Modified: `package-lock.json`
+
+## 2026-10-24
+- **19:15** — Domain badge row: scrollbar hidden; it still scrolls sideways by touch, trackpad or shift+wheel.
+- **19:15** — Domain badges on acronym cards sit on one line, scrolling sideways (thin scrollbar) when they don't fit.
+- **19:04** — Acronym cards now show only once their domain check is back; a failed check still shows the card (no badges), rechecked later.
+- **19:04** — A run's button stays busy ("Checking domains…") until its acronyms' domains are checked, then the new cards appear together.
+- **18:56** — Acronym cards from the latest run get a New tag (not on a session's first run); cleared by the next run or leaving the session.
+
+## 2026-10-23
+- **00:15** — Options dropdown: darker border (zinc-400/70) and a two-layer shadow so it stands out from the cards behind it.
+- **00:15** — Stepper is now a flex row: fixed-width steps with flex-1 lines between, so it spreads to the panel's edges.
+- **00:07** — Acronym Options is now a dropdown floating over the list (z-20); closes on Escape, outside click or tabbing out.
+- **00:00** — Fresh session: Describe's button is now Get acronyms; one click makes words, then acronyms, and lands on the Acronyms step.
+- **00:00** — Generate acronyms moved to a footer pinned under Explore and Acronyms, with runs left; acronym settings fold into Options.
+- **00:00** — First run raises words per branch (up to 3) when 1-2 answered questions can't reach the min length; length errors open Options.
+
+## 2026-10-22
+- **13:24** — Domain badges now also check .net, .org (PIR) and .io (Identity Digital RDAP, not in the IANA list); one badge per extension.
+- **13:24** — Domain badges: name only, red with a cross when taken, green with a check when free; bigger text; shown under the full name.
+- **13:24** — Domain checks: 10 acronyms per request (40 lookups); 1 new test (83 passing).
+- **13:09** — Acronym cards now show if their .com is free, via the registry's RDAP server (Verisign): free, no key; 404 = free, 200 = taken.
+- **13:09** — GET /api/sessions/:id/domains checks up to 20 visible acronyms; answers kept in domain_checks (taken 24 h, free 1 h).
+- **13:09** — Added 3 RDAP tests (82 passing).
+- **12:08** — Usage meter: each AI call now records tokens (in, out, reasoning, cached), cost and time; one ai_actions record per click, kept a year.
+- **12:08** — npm run usage:report adds a dated report to dev_resources/usage_reports.md: per step, per click, waste, window, month and paid price.
+- **12:08** — Report assumptions (usage levels, free users per paying one, card fees, margin) live in config/pricing.js. Untested plans show — not $0.
+- **12:08** — Five test briefs in dev_resources/test_briefs.md; a confirmed paid test account added to the dev database. 79 tests pass.
+- **11:28** — Reformulate now works from the project idea: the AI sums it up from all 4 answers (and a set title), then rewrites the answer for its question.
+- **11:28** — Reformulated answers aim for 150–450 characters, so they clear the minimum; no new facts, shorter rather than invented.
+- **08:56** — Reformulate with AI under each answer now works: rewrites the saved answer clearly, keeps its facts; replaces the text undoably (Ctrl+Z).
+- **08:56** — Reformulate is off for guests (sign up). Accounts get 5 per session per 5 h usage window, free and paid alike; unchanged rewrites don’t count.
+- **08:56** — New POST /api/sessions/:id/answers/:branch/reformulate; counts live per session in the owner’s usage window. 69 tests pass.
+
+## 2026-10-03
+- **14:57** — Email verification via Resend: signup no longer logs in; a single-use link (24 h) confirms the address. Unconfirmed accounts go after 7 days.
+- **14:57** — Signup, resend and forgot-password show the same page whether or not the email has an account; login takes as long either way.
+- **14:57** — Password reset: link valid 1 h, works once; saving confirms the email and logs out other devices. Email links open a page; only its button acts.
+- **14:57** — Rate limits (MongoDB counters) on login, signup and reset, per IP and per email; at most 3 account emails per address per hour.
+- **14:57** — Review fixes: no 500 on empty posts, proxy-safe origin check, TRUST_PROXY validated, guest dialog reports real counts. /admin: admins only.
+- **14:57** — New: npm run set-role -- <email> admin. APP_URL + EMAIL_FROM in .env. Draft copy in account_copy.md. 59 tests and 31 e2e checks pass.
+- **14:28** — Agreed wording for the "email already registered" notice saved in dev_resources/account_copy.md, for task D1JUJC.
+- **13:57** — Accounts live: User model (argon2id passwords, role kept apart from plan); login/signup/logout pages work; logins stored in MongoDB.
+- **13:57** — Logging in leaves the guest alone: the app asks to move its sessions to the account or delete them (they may be someone else's).
+- **13:57** — Moved sessions stop expiring and keep their dates. Logout clears the guest cookie, so the next person on the browser starts fresh.
+- **13:57** — Auth forms refuse cross-site posts (login CSRF). New /api/guest-sessions routes. 52 tests passing; full flow checked end to end.
+
+## 2026-10-02
+- **12:06** — Guests last 3 h from their first session: cookie "<random>.<start ms>" is refused after 3 h; their next session starts a new guest.
+- **12:06** — Guest sessions get expiresAt; a MongoDB TTL index erases them when the 3 h are up (tested: deleted within a minute).
+- **12:06** — No guest cookie until a visitor creates a session. Guest length is GUEST_HOURS in config/limits.js.
+- **12:06** — Sidebar shows "Erased at HH:MM" under Guest; when time is up the page clears and says so. 47 tests passing.
+- **08:42** — Sessions now have an owner: "guest:<hash>" from a random httpOnly guest_id cookie, or "user:<id>" once auth sets req.user.
+- **08:42** — Every /api/sessions query is scoped to its owner; another owner's session answers 404. Owner key never sent to clients.
+- **08:42** — New middleware/owner.js (+4 tests, 43 passing). At login, guest sessions should be reassigned to the user (noted in file).
+- **03:20** — MongoDB database renamed project_acronym_maker → genlpt (server.js dbName, .env, .env.example). No data existed to migrate.
+- **03:20** — .env.example PORT corrected 3004 → 3001 to match project-ports.json.
+- **03:08** — Project folder renamed project_acronym_maker → genlpt: package.json name, genlpt.vbs launcher, AGENTS.md path.
+
 ## 2026-10-01
 - **13:14** — App renamed gava → GenLPT (Generator of Logical Phrases from Terms, found with the app itself) in config/brand.js.
 - **13:02** — Answer Copy button confirms on itself: the icon turns into a green check for 1.5 s (the far-off toast was easy to miss).

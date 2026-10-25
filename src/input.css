@@ -84,27 +84,21 @@
   .label { @apply block text-sm font-medium text-zinc-600; }
 
   /* Quiet compact select: session language + model above the title */
-  .meta-select { @apply rounded-md border border-transparent bg-zinc-100 px-2 py-1 text-sm text-zinc-700; }
+  .meta-select { @apply rounded-md border border-zinc-200 bg-transparent px-2 py-1 text-sm text-zinc-700; }
   .meta-select:not(:disabled) { @apply cursor-pointer; }
-  .meta-select:not(:disabled):hover { @apply bg-zinc-200 text-zinc-900; }
+  .meta-select:not(:disabled):hover { @apply border-zinc-300 text-zinc-900; }
   .meta-select:focus { @apply border-cerise-500 outline-none ring-2 ring-cerise-100; }
   .meta-select:disabled { @apply cursor-not-allowed text-zinc-400; }
 
-  /* Workflow stepper (#steps): a dot over a label; a line joins each dot to the previous one.
+  /* Workflow stepper (#steps): a dot over a label, steps of one fixed width (the widest label, so the dots don't move
+     when the current one turns bold), and a flex-1 line between them filling the rest of the row.
      aria-selected = current step (filled dot); data-done = the step produced something (check, pink line onward). */
-  .step { @apply relative flex flex-col items-center gap-1 rounded-md px-1 py-1 text-sm font-medium text-zinc-500; }
+  .step { @apply relative flex w-18 shrink-0 flex-col items-center gap-1 rounded-md px-1 py-1 text-sm font-medium whitespace-nowrap text-zinc-500; }
   .step:hover { @apply text-zinc-900; }
-  .step + .step::before {
-    content: '';
-    position: absolute;
-    top: calc(1.125rem - 1px); /* py-1 + half the dot - half the line */
-    left: calc(-50% + 1.25rem);
-    right: calc(50% + 1.25rem);
-    height: 2px;
-    border-radius: 9999px;
-    background: var(--color-zinc-200);
-  }
-  .step[data-done="true"] + .step::before { background: var(--color-cerise-500); }
+  /* Top: py-1 + half the dot - half the line. Runs into the steps' empty sides, stopping 6px from each dot:
+     (w-18 - dot) / 2 = 22px of side, minus 16px of negative margin. */
+  .step-line { @apply -mx-4 mt-[calc(1.125rem-1px)] h-0.5 min-w-4 flex-1 rounded-full bg-zinc-200; }
+  .step[data-done="true"] + .step-line { background: var(--color-cerise-500); }
   .step-dot {
     @apply flex size-7 items-center justify-center rounded-full border-2 border-zinc-300 bg-white text-sm font-semibold tabular-nums text-zinc-500 transition-colors;
   }

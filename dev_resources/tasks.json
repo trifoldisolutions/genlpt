@@ -1,0 +1,542 @@
+{
+  "tags": [
+    "billing",
+    "accounts",
+    "quotas",
+    "decision",
+    "launch",
+    "blocker",
+    "ops",
+    "security",
+    "legal"
+  ],
+  "tasks": [
+    {
+      "id": "O5XZ3E",
+      "title": "Lock down the dev task board",
+      "description": "/dev-resources/tasks is open to anyone, and its POST routes let any visitor create, edit or delete tasks. Don't mount it in production, or make it admin-only.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "blocker",
+        "security"
+      ],
+      "createdAt": "2026-10-25T13:02:56.258Z",
+      "updatedAt": "2026-10-25T13:02:56.258Z"
+    },
+    {
+      "id": "GSNZV3",
+      "title": "Privacy policy and terms",
+      "description": "No privacy policy or terms (GDPR, Québec Law 25; mentions légales if selling in France). The app stores emails and project text and sends that text to OpenRouter's model providers. Link them in the footer and on signup.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "blocker",
+        "legal"
+      ],
+      "createdAt": "2026-10-25T13:02:56.247Z",
+      "updatedAt": "2026-10-25T13:02:56.247Z"
+    },
+    {
+      "id": "892AK7",
+      "title": "Acronym runs outlast host timeouts",
+      "description": "A measured acronym run took 130 s (single name calls up to 98 s). Many hosts cut requests at 30–100 s. Pick a host without that limit, or run generation as a job the page polls.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "blocker",
+        "ops"
+      ],
+      "createdAt": "2026-10-25T13:02:56.235Z",
+      "updatedAt": "2026-10-25T13:02:56.235Z"
+    },
+    {
+      "id": "B4ZDWG",
+      "title": "Commit the accounts and usage work",
+      "description": "About 25 changed and 30 new files (accounts, usage limits, email, cost reports) were never committed; the last commit is df07e51. Commit and push before deploying.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "ops"
+      ],
+      "createdAt": "2026-10-25T13:02:56.224Z",
+      "updatedAt": "2026-10-25T13:02:56.224Z"
+    },
+    {
+      "id": "ZIKY61",
+      "title": "Fix the body-parser vulnerability",
+      "description": "npm audit: 1 high-severity issue in body-parser 2.0.0–2.3.0 (denial of service via trailing bytes after a compressed body). npm audit fix resolves it.",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "security"
+      ],
+      "createdAt": "2026-10-25T13:02:56.211Z",
+      "updatedAt": "2026-10-25T13:24:09.170Z"
+    },
+    {
+      "id": "FGEA53",
+      "title": "Production hosting and env setup",
+      "description": "No Dockerfile or Procfile yet. Pick a host and a hosted MongoDB; set NODE_ENV=production, SESSION_SECRET, TRUST_PROXY, APP_URL=https://genlpt.com and a Resend key on a verified domain.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "ops"
+      ],
+      "createdAt": "2026-10-25T13:02:56.201Z",
+      "updatedAt": "2026-10-25T13:02:56.201Z"
+    },
+    {
+      "id": "CZA9HE",
+      "title": "Security headers, logging, monitoring",
+      "description": "No security headers (CSP, HSTS, nosniff…), X-Powered-By still sent, no request logs or error monitoring. Add them so production problems are visible.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "security"
+      ],
+      "createdAt": "2026-10-25T13:02:56.189Z",
+      "updatedAt": "2026-10-25T13:02:56.189Z"
+    },
+    {
+      "id": "H42QMK",
+      "title": "Public health check calls OpenRouter",
+      "description": "GET /api/health pings OpenRouter's /key on every hit with no login needed; POST /api/llm/warmup is open too. Cache the result, or limit them to admins.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "security"
+      ],
+      "createdAt": "2026-10-25T13:02:56.178Z",
+      "updatedAt": "2026-10-25T13:02:56.178Z"
+    },
+    {
+      "id": "NJQ4RI",
+      "title": "Fix APP_URL port in local .env",
+      "description": ".env has PORT=3002 but APP_URL=http://localhost:3001, so dev email links (verify, reset) point to the wrong port.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch",
+        "ops"
+      ],
+      "createdAt": "2026-10-25T13:02:56.166Z",
+      "updatedAt": "2026-10-25T13:02:56.166Z"
+    },
+    {
+      "id": "O4P23E",
+      "title": "Flesh out the landing page",
+      "description": "The landing page is one heading and one sentence. Explain what GenLPT does, show an example acronym, and link to the app and signup.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "launch"
+      ],
+      "createdAt": "2026-10-25T13:02:56.156Z",
+      "updatedAt": "2026-10-25T13:02:56.156Z"
+    },
+    {
+      "id": "D1JUJC",
+      "title": "Don't reveal which emails have accounts",
+      "description": "After email provider: all signups get the same full, professional confirmation (taken email: mail owner); same login timing and reset reply.",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-03T18:19:45.281Z",
+      "updatedAt": "2026-10-03T18:57:36.574Z"
+    },
+    {
+      "id": "C16N4F",
+      "title": "Decide: paid plan allowance vs unlimited",
+      "description": "Decide: does the paid plan get a monthly allowance (recommended, LLM costs vary) or unlimited use with only an hourly anti-burst cap?",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "decision",
+        "billing",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.972Z",
+      "updatedAt": "2026-10-25T13:02:56.124Z"
+    },
+    {
+      "id": "CSNZ3Z",
+      "title": "Decide: is model choice a paid perk?",
+      "description": "Decide: is model choice a paid perk, or one model for everyone? Decides if plain tokens are a fair limit or limits must use cost.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "decision",
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.963Z",
+      "updatedAt": "2026-10-02T16:14:27.963Z"
+    },
+    {
+      "id": "KX8FH1",
+      "title": "Decide: guest acronym cap strategy",
+      "description": "Decide guest acronym cap: generate the full set and lock most (costs more, converts better) or just generate fewer for guests?",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "decision",
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.954Z",
+      "updatedAt": "2026-10-02T16:14:27.954Z"
+    },
+    {
+      "id": "4LIRKA",
+      "title": "Decide: payment provider",
+      "description": "Decide payment provider: Stripe, or a merchant of record (Paddle, Lemon Squeezy) that handles VAT/sales tax. Depends where you sell.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "decision",
+        "billing",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.945Z",
+      "updatedAt": "2026-10-25T13:02:56.114Z"
+    },
+    {
+      "id": "1AQRAT",
+      "title": "Usage log for every LLM call",
+      "description": "Usage log: chat() returns token usage + cost; chatJSON records every call (JSON retries, AI titles too) in a UsageEvent collection.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.934Z",
+      "updatedAt": "2026-10-02T16:14:27.934Z"
+    },
+    {
+      "id": "8DJTJE",
+      "title": "Measure real token cost per action",
+      "description": "Measure real token cost per action (words, expand, generate, real-words mode) from the usage log, then set each plan's numbers.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.922Z",
+      "updatedAt": "2026-10-25T13:02:56.092Z"
+    },
+    {
+      "id": "BR5BNS",
+      "title": "User model",
+      "description": "User model: email, passwordHash, emailVerifiedAt, role (user|admin) kept separate from plan (free|paid), subscription subdoc.",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:14:27.912Z",
+      "updatedAt": "2026-10-03T17:57:27.522Z"
+    },
+    {
+      "id": "3RVIXZ",
+      "title": "Auth: sessions, passwords, login pages",
+      "description": "Auth: express-session + connect-mongo, argon2/bcrypt passwords; wire login/signup/logout pages and set req.user (owner.js reads it).",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:14:27.903Z",
+      "updatedAt": "2026-10-03T17:57:27.522Z"
+    },
+    {
+      "id": "DWV4JX",
+      "title": "Plans table + entitlements(req)",
+      "description": "config/plans.js + entitlements(req): every guest/free/paid limit in one table; code asks entitlements, never checks the plan directly.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.895Z",
+      "updatedAt": "2026-10-02T16:14:27.895Z"
+    },
+    {
+      "id": "L8YF8A",
+      "title": "Quotas keyed on the owner key",
+      "description": "Quotas keyed on the owner key: atomic $inc counters per hour (+ day/month), TTL cleanup. Check before an LLM action, charge real usage after.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.885Z",
+      "updatedAt": "2026-10-02T16:14:27.885Z"
+    },
+    {
+      "id": "HM3QVH",
+      "title": "One LLM action in flight per owner",
+      "description": "One LLM action in flight per owner: a second Generate (e.g. from another tab) gets a 429 until the first one finishes.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.874Z",
+      "updatedAt": "2026-10-02T16:14:27.874Z"
+    },
+    {
+      "id": "9UXB6I",
+      "title": "Usage meter in the UI",
+      "description": "Usage meter in the UI: % of allowance used + reset time. At 0: wait or sign up (guests), wait or upgrade (free).",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.862Z",
+      "updatedAt": "2026-10-02T16:14:27.862Z"
+    },
+    {
+      "id": "ZYCEEA",
+      "title": "Server-side plan gating",
+      "description": "Server-side plan gating: model choice (POST /sessions and /llm/warmup take any listed model) and Real words only (~40 LLM calls).",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.850Z",
+      "updatedAt": "2026-10-02T16:14:27.850Z"
+    },
+    {
+      "id": "GVARFM",
+      "title": "Guest acronym cap",
+      "description": "Guest acronym cap: send only the top N; the rest stay in DB, withheld from GET /sessions/:id too, and unlock when the guest signs up.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:14:27.840Z",
+      "updatedAt": "2026-10-02T16:14:27.840Z"
+    },
+    {
+      "id": "Y07I6Y",
+      "title": "Session caps per plan",
+      "description": "Session caps per plan. On paid → free downgrade, sessions over the cap become read-only, never deleted.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas",
+        "billing"
+      ],
+      "createdAt": "2026-10-02T16:14:27.830Z",
+      "updatedAt": "2026-10-02T16:14:27.830Z"
+    },
+    {
+      "id": "V48FZ5",
+      "title": "Platform daily spend cap",
+      "description": "Platform daily spend cap: past it, pause guests first, then free accounts. Also set a credit limit on the OpenRouter key itself.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.819Z",
+      "updatedAt": "2026-10-25T13:02:56.070Z"
+    },
+    {
+      "id": "9IC70A",
+      "title": "Email provider for verification + reset",
+      "description": "Email via Resend (genlpt.com verified, key in .env) for verification + password reset. Free allowance starts only once the email is verified.",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:14:27.810Z",
+      "updatedAt": "2026-10-03T18:57:36.574Z"
+    },
+    {
+      "id": "2NWDS0",
+      "title": "Signup abuse protection",
+      "description": "Signup abuse: Cloudflare Turnstile on signup. (Rate limits on login, signup and reset per IP and per email: done 2026-10-03.)",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.800Z",
+      "updatedAt": "2026-10-25T13:02:56.081Z"
+    },
+    {
+      "id": "53L4TO",
+      "title": "Admin usage page",
+      "description": "Admin usage page: spend per user/guest/IP, top consumers; grant extra allowance, change plan, ban an account.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas",
+        "launch"
+      ],
+      "createdAt": "2026-10-02T16:14:27.789Z",
+      "updatedAt": "2026-10-25T13:02:56.146Z"
+    },
+    {
+      "id": "S34BLA",
+      "title": "Account deletion + data export",
+      "description": "Account settings: delete account (with its sessions) and export my data (GDPR, Québec Law 25).",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.780Z",
+      "updatedAt": "2026-10-25T13:02:56.057Z"
+    },
+    {
+      "id": "Y0GW96",
+      "title": "Payments: checkout, portal, webhook",
+      "description": "Payments: checkout + billing portal + webhook that only writes user.subscription. Paid = active/trialing, or past_due within grace.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "billing",
+        "launch",
+        "blocker"
+      ],
+      "createdAt": "2026-10-02T16:14:27.765Z",
+      "updatedAt": "2026-10-25T13:02:56.103Z"
+    },
+    {
+      "id": "PQVOYT",
+      "title": "Enforce session scoping",
+      "description": "Enforce session scoping: model guard rejecting BrainstormSession queries without owner + test that guest B can't reach guest A's session.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:10:24.665Z",
+      "updatedAt": "2026-10-02T16:14:27.984Z"
+    },
+    {
+      "id": "IXYFO0",
+      "title": "Guest quotas need accounts",
+      "description": "Plan limits: a guest resets every 3 h or on cookie clear, so quotas need accounts. Rate-limit guests by IP (esp. LLM calls).",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "quotas"
+      ],
+      "createdAt": "2026-10-02T16:10:24.656Z",
+      "updatedAt": "2026-10-02T16:14:28.034Z"
+    },
+    {
+      "id": "RJXY8J",
+      "title": "Claim guest sessions at login",
+      "description": "Auth: at login move guest sessions to the user + $unset expiresAt. Shared computer: claim silently, ask, or only since last logout?",
+      "done": true,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:10:24.647Z",
+      "updatedAt": "2026-10-03T17:57:27.522Z"
+    },
+    {
+      "id": "UCRL1Q",
+      "title": "Explain when cookies are blocked",
+      "description": "Cookies blocked: New session shows \"Session not found\" and the list stays empty. Detect it and explain that cookies are needed.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:10:24.637Z",
+      "updatedAt": "2026-10-02T16:14:28.003Z"
+    },
+    {
+      "id": "OX8XHV",
+      "title": "Serve prod over HTTPS",
+      "description": "Prod over plain HTTP (non-localhost): Secure guest cookie gets dropped, so the app breaks for everyone. Serve over HTTPS.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts",
+        "launch"
+      ],
+      "createdAt": "2026-10-02T16:10:24.625Z",
+      "updatedAt": "2026-10-25T13:02:56.134Z"
+    },
+    {
+      "id": "HPUNZ0",
+      "title": "Guest expiry across tabs",
+      "description": "Guest expiry in other tabs: a tab opened before the first session (made in another tab) has no timer, so it 404s instead of resetting.",
+      "done": false,
+      "archived": false,
+      "dueDate": null,
+      "tags": [
+        "accounts"
+      ],
+      "createdAt": "2026-10-02T16:10:24.385Z",
+      "updatedAt": "2026-10-02T16:14:28.023Z"
+    }
+  ]
+}

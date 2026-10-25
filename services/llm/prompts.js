@@ -103,6 +103,29 @@ const T = {
       'Un titre naturel, ni acronyme ni liste de mots-clés. Majuscule au premier mot seulement (sauf noms propres), ' +
       'sans guillemets ni ponctuation finale.\n' +
       'Format : {"title": "..."}',
+    reformulateSystem:
+      'Tu aides à décrire clairement un projet, pour qu’un outil de naming y trouve des mots et un acronyme. Tu réponds uniquement en JSON valide.',
+    // What each question is for, so the rewrite answers it
+    reformulateFocus: {
+      who: 'ce qu’est le projet (application, service, association…) et pour qui',
+      what: 'ce qu’il fait : ses actions principales et ce qu’on en retire',
+      how: 'comment il fonctionne : ses étapes, ses moyens ou sa méthode',
+      why: 'pourquoi il existe : le problème qu’il résout et ce qu’il apporte',
+    },
+    reformulateTask: ({ q, focus, answer, title, lo, hi }) =>
+      (title ? `Titre de travail : « ${title} »\n` : '') +
+      'Ces réponses décrivent un même projet. Leurs mots deviennent la matière de son nom : ' +
+      'chaque réponse doit donc dire clairement ce qu’est le projet, sous l’angle de sa question.\n\n' +
+      `Question à retravailler : « ${q} » (${focus})\nRéponse actuelle : « ${answer} »\n\n` +
+      'D’abord, résume en une phrase l’idée du projet tirée de toutes les réponses : ce qu’il est, pour qui, et ce qu’il change.\n' +
+      'Puis réécris la réponse à cette question à la lumière de cette idée : exprime ce que l’auteur veut dire, pas seulement ce qu’il a écrit.\n' +
+      '- Garde ses faits et son point de vue (je, nous, il…) ; ne contredis aucune réponse et n’ajoute rien qu’elles ne disent pas.\n' +
+      '- Reste sur ce que demande cette question ; inutile de répéter ce qu’une autre réponse dit déjà.\n' +
+      '- Des mots simples et concrets : nomme les choses, personnes, actions et qualités. ' +
+      'Pas de slogan ni de mots vagues qui iraient à n’importe quel projet.\n' +
+      `- Un seul paragraphe, sans liste ni guillemets, dans la langue de la réponse, de ${lo} à ${hi} caractères ; ` +
+      'plus court si les réponses n’en disent pas assez, plutôt qu’inventer.\n' +
+      'Format : {"idea": "...", "answer": "..."}',
     branchNames: { who: 'Qui', what: 'Quoi', how: 'Comment', why: 'Pourquoi' },
   },
   en: {
@@ -181,6 +204,28 @@ const T = {
       `Suggest a working title for this project: at most ${max} words, in English, saying clearly what it is and does. ` +
       'A natural title, not an acronym or a keyword list. Title Case, no quotes, no trailing punctuation.\n' +
       'Format: {"title": "..."}',
+    reformulateSystem:
+      'You help people describe their project clearly, so a naming tool can find words and an acronym in it. You answer only with valid JSON.',
+    reformulateFocus: {
+      who: 'what kind of thing the project is (an app, a service, a group…) and who it is for',
+      what: 'what it does: its main actions and what people get from it',
+      how: 'how it works: its steps, means or method',
+      why: 'why it exists: the problem it solves and what it brings',
+    },
+    reformulateTask: ({ q, focus, answer, title, lo, hi }) =>
+      (title ? `Working title: "${title}"\n` : '') +
+      'These answers describe one project. Their words become the material for its name, ' +
+      'so each answer should say plainly what the project is, from its own question’s angle.\n\n' +
+      `Question to rework: "${q}" (${focus})\nCurrent answer: "${answer}"\n\n` +
+      'First, sum up the project’s idea in one sentence, from all the answers: what it is, who it is for, and what it changes.\n' +
+      'Then rewrite the answer to this question in light of that idea: say what the author means, not only what they wrote.\n' +
+      '- Keep its facts and point of view (I, we, it…); contradict no answer and add nothing they don’t say.\n' +
+      '- Stick to what this question asks; what another answer already says doesn’t need repeating.\n' +
+      '- Plain, concrete words: name the things, people, actions and qualities. ' +
+      'No slogans, and no vague words that could fit any project.\n' +
+      `- One paragraph, no lists or quotes, in the answer’s language, ${lo} to ${hi} characters; ` +
+      'shorter if the answers don’t say enough, rather than inventing.\n' +
+      'Format: {"idea": "...", "answer": "..."}',
     branchNames: { who: 'Who', what: 'What', how: 'How', why: 'Why' },
   },
 };
@@ -200,6 +245,7 @@ function branchExpansion({ language, branch, answers, existing = [] }) {
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${T[l].branchTask(branch, QUESTIONS[l][branch], answers[branch] || '', existing)}`,
     temperature: 0.8,
+    step: 'words',
   };
 }
 
@@ -209,6 +255,7 @@ function wordExpansion({ language, branch, seed, answers, existing = [] }) {
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${T[l].wordTask(QUESTIONS[l][branch], seed, existing)}`,
     temperature: 0.8,
+    step: 'expand',
   };
 }
 
@@ -224,6 +271,7 @@ function composeNames({ language, answers, idWords, minLength, maxLength, maxPer
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${groups.join('\n\n')}\n\n${T[l].composeTask(minLength, maxLength, maxPerBranch, allowChunks)}`,
     temperature: 0.9,
+    step: 'compose',
   };
 }
 
@@ -237,6 +285,7 @@ function nameAcronym({ language, answers, candidate }) {
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${T[l].nameTask(line)}`,
     temperature: 0.6,
+    step: 'name',
   };
 }
 
@@ -249,6 +298,7 @@ function rankAcronyms({ language, answers, candidates }) {
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${T[l].rankTask}\n\n${lines.join('\n')}`,
     temperature: 0.3,
+    step: 'rank',
   };
 }
 
@@ -259,7 +309,29 @@ function projectTitle({ language, answers, maxWords }) {
     system: T[l].system,
     user: `${contextBlock(l, answers)}\n\n${T[l].titleTask(maxWords)}`,
     temperature: 0.7,
+    step: 'title',
   };
 }
 
-module.exports = { BRANCHES, QUESTIONS, CONNECTOR_EXAMPLES, branchExpansion, wordExpansion, composeNames, nameAcronym, rankAcronyms, projectTitle };
+// An answer's "Reformulate with AI": the model sums up the project's idea from all the answers (and the title
+// the user or AI gave it), then rewrites this one answer in light of it. The idea is asked first so the
+// rewrite follows from it; only `answer` is used. Target length: comfortably past the minimum, below the cap.
+function reformulateAnswer({ language, branch, answers, title = '', minChars, maxChars }) {
+  const l = lang(language);
+  const task = T[l].reformulateTask({
+    q: QUESTIONS[l][branch],
+    focus: T[l].reformulateFocus[branch],
+    answer: (answers[branch] || '').trim(),
+    title: title.trim(),
+    lo: Math.round(minChars * 1.5),
+    hi: Math.round(maxChars * 0.9),
+  });
+  return {
+    system: T[l].reformulateSystem,
+    user: `${contextBlock(l, answers)}\n\n${task}`,
+    temperature: 0.5,
+    step: 'reformulate',
+  };
+}
+
+module.exports = { BRANCHES, QUESTIONS, CONNECTOR_EXAMPLES, branchExpansion, wordExpansion, composeNames, nameAcronym, rankAcronyms, projectTitle, reformulateAnswer };

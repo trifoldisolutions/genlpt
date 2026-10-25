@@ -1,4 +1,4 @@
-// Auth page: password reveal, placeholder submit, and the acronym showcase.
+// Account pages: password reveal, busy submit buttons, "Forgot password?" link, and the acronym showcase.
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -12,10 +12,36 @@ document.querySelectorAll('[data-reveal]').forEach((btn) => {
   });
 });
 
-// Accounts aren't live yet: keep native validation, then explain instead of posting
-$('#auth-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  $('#auth-note').hidden = false;
+// Forms with data-busy post normally; meanwhile the submit button shows a spinner and can't be pressed twice.
+// The spinner takes the button's icon's place, or goes before its label when it has none.
+document.querySelectorAll('form[data-busy]').forEach((form) => {
+  const submit = $('button[type="submit"]', form);
+  const submitIcon = $('iconify-icon', submit);
+  const busySpinner = Object.assign(document.createElement('span'), {
+    className: 'inline-block size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent',
+  });
+  busySpinner.setAttribute('aria-hidden', 'true');
+
+  const setBusy = (busy) => {
+    submit.disabled = busy;
+    submit.setAttribute('aria-busy', String(busy));
+    if (submitIcon) (busy ? submitIcon : busySpinner).replaceWith(busy ? busySpinner : submitIcon);
+    else if (busy) submit.prepend(busySpinner);
+    else busySpinner.remove();
+  };
+
+  form.addEventListener('submit', () => setBusy(true));
+  // Coming back with the Back button restores the page as it was left: busy
+  window.addEventListener('pageshow', (e) => { if (e.persisted && submit.disabled) setBusy(false); });
+});
+
+// "Continue with Google" isn't built yet: it only says so
+$('[data-google]')?.addEventListener('click', () => { $('#google-note').hidden = false; });
+
+// "Forgot password?" brings along the email typed so far
+$('[data-forgot]')?.addEventListener('click', (e) => {
+  const email = $('input[name="email"]')?.value.trim();
+  if (email) e.currentTarget.href = `/app/forgot?email=${encodeURIComponent(email)}`;
 });
 
 // Showcase: cycle the example acronyms, replaying the CSS entrance each time

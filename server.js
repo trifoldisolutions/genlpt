@@ -7,9 +7,21 @@ const express = require('express');
 const mongoose = require('mongoose');
 const brand = require('./config/brand');
 const limits = require('./config/limits');
+const { sessions, loadUser } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
+
+// Behind proxies that terminate HTTPS (most hosts), Express must trust them: the login cookie is only set
+// over HTTPS, and rate limits need the visitor's real IP. Only a count of proxies is accepted: trusting
+// every hop ("true") would let anyone pick their IP with an X-Forwarded-For header and dodge rate limits.
+const { TRUST_PROXY, APP_URL } = process.env;
+if (/^\d+$/.test(TRUST_PROXY || '')) app.set('trust proxy', Number(TRUST_PROXY));
+else if (TRUST_PROXY) console.warn(`TRUST_PROXY must be how many proxies sit in front (usually 1), not "${TRUST_PROXY}": ignored.`);
+if (process.env.NODE_ENV === 'production') {
+  if (!TRUST_PROXY) console.warn('TRUST_PROXY is not set: behind an HTTPS proxy, logins will silently fail.');
+  if (!APP_URL) console.warn('APP_URL is not set: links in account emails will point to localhost.');
+}
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -22,12 +34,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor/cytoscape', express.static(path.join(__dirname, 'node_modules/cytoscape/dist')));
 
-// Signed-in user for views ({ name, email } or null). Placeholder until auth
-// is wired up: set req.user in the auth middleware and everything follows.
-app.use((req, res, next) => {
-  res.locals.user = req.user || null;
-  next();
-});
+// Signed-in user: req.user for routes, res.locals.user ({ name, email, … } or null) for views
+app.use(sessions, loadUser);
 
 // Facades
 const facades = [
@@ -63,7 +71,7 @@ app.use((err, req, res, next) => {
 // Mongo
 if (process.env.MONGO_URI) {
   mongoose
-    .connect(process.env.MONGO_URI, { dbName: 'project_acronym_maker' })
+    .connect(process.env.MONGO_URI, { dbName: 'genlpt' })
     .then(() => console.log('MongoDB connected'))
     .catch((err) => console.error('MongoDB connection error:', err.message));
 } else {

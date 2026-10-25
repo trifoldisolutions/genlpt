@@ -30,11 +30,17 @@ function retryDelay(res, attempt) {
   return Math.min(Math.max(header, retryBase() * 2 ** attempt), 30000) + Math.random() * retryBase() / 4;
 }
 
+// opts.waits: { rateLimitRetries, waitMs }, counted up while rate limits are waited out
 async function request(pathname, opts = {}) {
   for (let attempt = 0; ; attempt++) {
     const { res, data, text } = await send(pathname, opts);
     if (res.status === 429 && attempt < RETRIES) {
-      await sleep(retryDelay(res, attempt));
+      const delay = retryDelay(res, attempt);
+      if (opts.waits) {
+        opts.waits.rateLimitRetries++;
+        opts.waits.waitMs += Math.round(delay);
+      }
+      await sleep(delay);
       continue;
     }
     if (!res.ok || data?.error) {
@@ -121,16 +127,55 @@ async function ping() {
   return true;
 }
 
-// Returns the raw assistant text.
+// What a call used, from the answer's usage block: completion tokens include reasoning. The cost is what
+// OpenRouter charged (USD); when it doesn't say, it comes from the model's listed prices (null if unknown).
+async function usageOf(model, u = {}) {
+  const inputTokens = u.prompt_tokens ?? null;
+  const outputTokens = u.completion_tokens ?? null;
+  let cost = typeof u.cost === 'number' ? u.cost : null;
+  if (cost === null && inputTokens !== null) {
+    const price = (await catalog())?.get(model)?.pricing;
+    if (price) cost = inputTokens * Number(price.prompt || 0) + (outputTokens || 0) * Number(price.completion || 0);
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
+    cachedTokens: u.prompt_tokens_details?.cached_tokens ?? 0,
+    cost,
+  };
+}
+
+// Returns the raw assistant text and what the call used (see index.js). A failed call carries its rate-limit
+// waits as err.usage.
 async function chat({ model, messages, temperature = 0.7 }) {
-  const data = await request('/chat/completions', {
-    method: 'POST',
-    body: { model, messages, temperature, max_tokens: maxTokens(), response_format: { type: 'json_object' }, ...(await reasoningFor(model)) },
-  });
-  return data.choices?.[0]?.message?.content ?? '';
+  const waits = { rateLimitRetries: 0, waitMs: 0 };
+  let data;
+  try {
+    data = await request('/chat/completions', {
+      method: 'POST',
+      body: {
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens(),
+        response_format: { type: 'json_object' },
+        usage: { include: true }, // tokens and cost in the answer
+        ...(await reasoningFor(model)),
+      },
+      waits,
+    });
+  } catch (err) {
+    err.usage = waits;
+    throw err;
+  }
+  return { text: data.choices?.[0]?.message?.content ?? '', usage: { ...(await usageOf(model, data.usage)), ...waits } };
 }
 
 // Hosted models are always loaded.
 async function warmup() {}
 
-module.exports = { listModels, ping, chat, warmup, defaultModel, concurrency };
+// What changes a call's cost besides the model, kept with each AI action for the usage report
+const settings = () => ({ reasoning: reasoningEffort(), maxTokens: maxTokens() });
+
+module.exports = { listModels, ping, chat, warmup, defaultModel, concurrency, settings };

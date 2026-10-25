@@ -44,12 +44,15 @@ const AcronymSchema = new Schema(
     tagline: String,
     source: { type: String, enum: ['engine', 'llm'], required: true },
     favorite: { type: Boolean, default: false },
+    rank: Number, // place in its run, best first (0); the viewer's plan decides how many per run they see
   },
   { timestamps: true }
 );
 
 const BrainstormSessionSchema = new Schema(
   {
+    owner: { type: String, required: true }, // "guest:<hash>" or "user:<id>", set by middleware/owner.js
+    expiresAt: { type: Date }, // guests only: MongoDB deletes the session at this time (TTL index below)
     title: { type: String, default: '', trim: true, maxlength: 120 },
     titleSource: { type: String, enum: TITLE_SOURCES, default: 'auto' },
     aiTitle: { type: String, default: '', trim: true, maxlength: 120 }, // the AI suggestion, made once per session and kept
@@ -64,8 +67,18 @@ const BrainstormSessionSchema = new Schema(
     words: [WordSchema],
     acronyms: [AcronymSchema],
   },
-  { timestamps: true, collection: 'brainstorm_sessions' }
+  {
+    timestamps: true,
+    collection: 'brainstorm_sessions',
+    // The owner key only scopes queries; clients never need it (the guest's time left comes with the session list)
+    toJSON: { transform: (doc, ret) => { delete ret.owner; delete ret.expiresAt; return ret; } },
+  }
 );
+
+// The sidebar list: one owner's sessions, newest first
+BrainstormSessionSchema.index({ owner: 1, updatedAt: -1 });
+// Guest sessions are erased when their guest's time is up (MongoDB checks about once a minute)
+BrainstormSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const BrainstormSession = mongoose.model('BrainstormSession', BrainstormSessionSchema);
 

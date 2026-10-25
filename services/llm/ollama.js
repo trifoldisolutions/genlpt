@@ -49,7 +49,7 @@ async function ping() {
   return true;
 }
 
-// Returns the raw assistant text.
+// Returns the raw assistant text and what the call used (see index.js): a local model costs nothing.
 async function chat({ model, messages, temperature = 0.7 }) {
   const data = await request('/api/chat', {
     method: 'POST',
@@ -63,7 +63,10 @@ async function chat({ model, messages, temperature = 0.7 }) {
       options: { temperature },
     },
   });
-  return data.message?.content ?? '';
+  return {
+    text: data.message?.content ?? '',
+    usage: { inputTokens: data.prompt_eval_count ?? null, outputTokens: data.eval_count ?? null, reasoningTokens: 0, cachedTokens: 0, cost: 0 },
+  };
 }
 
 // An empty chat request loads the model into memory.

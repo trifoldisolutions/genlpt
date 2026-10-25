@@ -8,18 +8,22 @@ const state = {
   health: { db: false, llm: false, defaultModel: '' },
   models: [],
   sessions: [],
+  sessionQuery: '', // sidebar search box
   session: null,
   modelWarm: false,
   warming: false,
-  busy: new Set(), // 'words', 'branch:who', 'word:<id>', 'acronyms'
+  busy: new Set(), // 'words', 'branch:who', 'word:<id>', 'acronyms', 'acronymDomains' (a run's domain checks)
   langHint: false,
   sort: 'score',
   filter: 'all',
   panel: null, // { kind: 'word' | 'branch', id, mode }
   step: 'describe', // 'describe' | 'explore' | 'acronyms'
+  usage: null, // the plan's AI limits and this window's counts (services/usage.js toView)
+  newAcronyms: new Set(), // ids from the last run, tagged "New" until the next run or leaving the session
 };
 
 let graph = null;
+let booted = false; // first session list + session load done (the panel's empty state waits for it)
 
 // ---------------------------------------------------------------------------
 // DOM helpers (all text goes through textContent)
@@ -49,8 +53,8 @@ function icon(name, size = 20, extra = '') {
   return h('iconify-icon', { icon: `boxicons:${name}`, width: String(size), height: String(size), class: extra || undefined, 'aria-hidden': 'true' });
 }
 
-function spinner(extra = '') {
-  return h('span', { class: `inline-block size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${extra}`, 'aria-hidden': 'true' });
+function spinner(extra = '', size = 'size-4') {
+  return h('span', { class: `inline-block ${size} shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${extra}`, 'aria-hidden': 'true' });
 }
 
 // Per-viewer UI preferences; storage may be unavailable.
@@ -62,7 +66,7 @@ const prefs = {
 const mqDesktop = window.matchMedia('(min-width: 64rem)');
 const isDesktop = () => mqDesktop.matches;
 
-function toast(message, kind = 'error') {
+function toast(message, kind = 'error', ms = kind === 'error' ? 7000 : 3500) {
   const kinds = {
     error: { accent: 'border-l-red-500', icon: 'alert-circle', color: 'text-red-600' },
     ok: { accent: 'border-l-emerald-500', icon: 'check-circle', color: 'text-emerald-600' },
@@ -74,7 +78,7 @@ function toast(message, kind = 'error') {
     role: kind === 'error' ? 'alert' : 'status',
   }, [icon(k.icon, 18, `mt-px ${k.color}`), h('span', { class: 'min-w-0 flex-1', text: message })]);
   $('#toasts').append(el);
-  setTimeout(() => el.remove(), kind === 'error' ? 7000 : 3500);
+  setTimeout(() => el.remove(), ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -91,12 +95,16 @@ async function api(method, path, body) {
   } catch {
     throw Object.assign(new Error('network'), { code: 'network' });
   }
+  // A guest's session was used: the server pushed its end back and says where it is now
+  const left = res.headers.get('X-Session-Expires-In');
+  if (left !== null) setSessionExpiry(path.split('/')[2], left); // /sessions/<id>/…
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.message || res.statusText);
     err.code = data.error || 'generic';
     err.status = res.status;
-    if (err.code === 'database_unavailable') { state.health.db = false; renderBanners(); }
+    err.data = data;
+    if (err.code === 'database_unavailable') { state.health.db = false; renderBanners(); watchDb(); }
     if (err.code === 'llm_unavailable') { state.health.llm = false; renderBanners(); renderBusy(); }
     throw err;
   }
@@ -118,6 +126,29 @@ async function checkHealth() {
   }
   setProvider(state.health.provider);
   renderBanners();
+  watchDb();
+}
+
+// Checks again and reloads whatever came back: the Retry buttons, and watchDb() while the database is down
+let rechecking = null;
+function recheckHealth() {
+  rechecking ||= (async () => {
+    const hadDb = state.health.db;
+    const hadLlm = state.health.llm;
+    await checkHealth();
+    if (!hadDb && state.health.db) await boot({ skipHealth: true });
+    else if (!hadLlm && state.health.llm) { await loadModels(); renderBusy(); warmup(); }
+  })().finally(() => { rechecking = null; });
+  return rechecking;
+}
+
+// A database outage is often a blip (the computer waking from sleep): while it lasts, check again every
+// DB_RECHECK_MS and on coming back to the tab, so the page recovers without Retry.
+const DB_RECHECK_MS = 15000;
+let dbTimer = null;
+function watchDb() {
+  clearTimeout(dbTimer);
+  if (!state.health.db) dbTimer = setTimeout(() => (document.hidden ? watchDb() : recheckHealth()), DB_RECHECK_MS);
 }
 
 async function loadModels() {
@@ -165,29 +196,44 @@ function setUrl(id, replace = false) {
 async function loadSessions() {
   if (!state.health.db) { state.sessions = []; renderSessions(); return; }
   try {
-    state.sessions = (await api('GET', '/sessions')).sessions;
+    const { sessions, usage } = await api('GET', '/sessions');
+    state.sessions = sessions.map(({ expiresInMs, ...s }) => ({ ...s, expiresAt: endIn(expiresInMs) }));
+    state.usage = usage;
   } catch (err) {
     state.sessions = [];
     fail(err);
   }
   renderSessions();
+  scheduleExpiry();
 }
+
+// Same test as the server's BLANK: nothing written in it, so it isn't kept
+const isBlank = (s) => !s.title?.trim() && !s.words?.length && !s.acronyms?.length && !BRANCHES.some((b) => s.answers?.[b]?.trim());
 
 async function openSession(id, { push = true } = {}) {
   await flushSave();
+  const prev = state.session;
   try {
     const { session } = await api('GET', `/sessions/${id}`);
     const prevModel = currentModel();
     state.session = session;
+    // Leaving a blank session drops it; if the delete fails, the next list load sweeps it
+    if (prev && prev._id !== id && isBlank(prev)) {
+      state.sessions = state.sessions.filter((s) => s._id !== prev._id);
+      api('DELETE', `/sessions/${prev._id}`).catch(() => {});
+    }
     state.langHint = false;
     state.step = session.acronyms?.length ? 'acronyms' : session.words?.length ? 'explore' : 'describe';
+    state.newAcronyms = new Set();
     closePanel();
+    toggleOptions(false);
     if (push) setUrl(id);
     renderAll({ resetGraph: true });
     closeDrawer();
     if (currentModel() !== prevModel || !state.modelWarm) warmup();
   } catch (err) {
-    fail(err);
+    // Arriving by address or Back at a session that's gone (often a blank one, swept): open the newest, no error
+    if (push || err.status !== 404) fail(err);
     if (err.status === 404) {
       state.sessions = state.sessions.filter((s) => s._id !== id);
       const fallback = state.sessions[0]?._id;
@@ -201,13 +247,138 @@ async function openSession(id, { push = true } = {}) {
 
 async function createSession() {
   try {
-    const { session } = await api('POST', '/sessions', { language: state.session?.language, model: currentModel() });
-    state.sessions.unshift({ _id: session._id, title: session.title, language: session.language, updatedAt: session.updatedAt });
+    const { session, expiresInMs } = await api('POST', '/sessions', { language: state.session?.language, model: currentModel() });
+    state.sessions.unshift({ _id: session._id, title: session.title, language: session.language, updatedAt: session.updatedAt, expiresAt: endIn(expiresInMs) });
+    scheduleExpiry();
+    setSessionSearch(false); // so the new, untitled session isn't filtered out
     await openSession(session._id);
     $('#title').focus();
   } catch (err) {
     fail(err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Guest time limit: each guest session is erased on the server a few hours after it was last used, and
+// each use pushes that back. The list keeps each one's end (expiresAt, on this browser's clock) for its card.
+
+let expiryTimer = null;
+
+// ms: time left as the server counts it; null for a signed-in user's session, which never expires
+const endIn = (ms) => (ms == null ? null : Date.now() + Number(ms));
+const shortTime = (at) => (at == null ? '' : new Intl.DateTimeFormat('en-GB', { timeStyle: 'short' }).format(at));
+
+// The server pushed a session's end back: its card changes when the minute shown does
+function setSessionExpiry(id, ms) {
+  const item = state.sessions.find((s) => s._id === id);
+  if (!item) return;
+  const next = endIn(ms);
+  const changed = shortTime(item.expiresAt) !== shortTime(next);
+  item.expiresAt = next;
+  if (changed) renderSessions();
+  scheduleExpiry();
+}
+
+// Wakes up a second after the next guest session's end, when the server has surely let it go
+function scheduleExpiry() {
+  clearTimeout(expiryTimer);
+  const next = Math.min(...state.sessions.map((s) => s.expiresAt ?? Infinity));
+  if (next !== Infinity) expiryTimer = setTimeout(expireSessions, Math.max(0, next - Date.now()) + 1000);
+}
+
+// Guest sessions whose time is up are gone on the server: drop them here too, the open one included
+function expireSessions() {
+  const gone = state.sessions.filter((s) => s.expiresAt != null && s.expiresAt <= Date.now());
+  if (gone.length) {
+    const ids = new Set(gone.map((s) => s._id));
+    state.sessions = state.sessions.filter((s) => !ids.has(s._id));
+    if (ids.has(state.session?._id)) {
+      clearTimeout(saveTimer);
+      pendingPatch = null;
+      state.session = null;
+      closePanel();
+      setUrl(null, true);
+      renderAll({ resetGraph: true });
+    } else {
+      renderSessions();
+    }
+    toast(gone.length === 1 ? t('guestSessionExpired', { title: gone[0].title || t('untitled') }) : t('guestSessionsExpired', { n: gone.length }), 'info', 10000);
+  }
+  scheduleExpiry();
+}
+
+// ---------------------------------------------------------------------------
+// Guest sessions at login: this browser may still hold sessions made before logging in, and on a shared
+// computer they may be someone else's. The user moves them to their account or deletes them.
+
+// busy: 'move' | 'delete' | null
+function renderGuestButtons(busy) {
+  const move = $('#guest-move');
+  const del = $('#guest-delete');
+  setButtonBusy(move, busy === 'move', t('guestMove'), t('guestMoving'), 'folder-down-arrow');
+  setButtonBusy(del, busy === 'delete', t('guestDelete'), t('guestDeleting'), 'trash');
+  move.disabled = !!busy;
+  del.disabled = !!busy;
+}
+
+// Signed-in users only. Resolves once the dialog closes: answered, or dismissed with Escape (asked again next visit).
+async function offerGuestSessions() {
+  const dialog = $('#guest-dialog');
+  if (!dialog || !state.health.db) return;
+  let sessions;
+  try {
+    ({ sessions } = await api('GET', '/guest-sessions'));
+  } catch {
+    return; // not worth holding up the app over; asked again next visit
+  }
+  if (!sessions.length) return;
+
+  const fmt = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  $('#guest-dialog-body').textContent = sessions.length === 1 ? t('guestDialogBodyOne') : t('guestDialogBodyMany', { n: sessions.length });
+  $('#guest-dialog-list').replaceChildren(...sessions.map((s) => h('li', { class: 'flex items-baseline justify-between gap-3 px-3 py-2' }, [
+    h('span', { class: 'min-w-0 truncate text-base text-zinc-800', text: s.title || t('untitled') }),
+    h('span', { class: 'shrink-0 text-sm text-zinc-500', text: fmt.format(new Date(s.updatedAt)) }),
+  ])));
+  const error = $('#guest-dialog-error');
+  show(error, false);
+  renderGuestButtons(null);
+
+  let pending = null; // the request in flight, if any
+  dialog.oncancel = (e) => { if (pending) e.preventDefault(); }; // Escape waits for a request in flight
+  dialog.showModal();
+  // { move, count } once answered (count: sessions the server actually moved or deleted), null if dismissed
+  const answer = await new Promise((resolve) => {
+    const answerWith = (move) => () => {
+      show(error, false);
+      renderGuestButtons(move ? 'move' : 'delete');
+      pending = api(move ? 'POST' : 'DELETE', move ? '/guest-sessions/move' : '/guest-sessions').then(
+        (r) => {
+          resolve({ move, count: move ? r.moved : r.deleted });
+          dialog.close();
+        },
+        (err) => {
+          pending = null;
+          error.textContent = errorText(err); // a toast would sit under the modal
+          show(error, true);
+          renderGuestButtons(null);
+        }
+      );
+    };
+    $('#guest-move').onclick = answerWith(true);
+    $('#guest-delete').onclick = answerWith(false);
+    // Some browsers close on a second Escape anyway: a request already sent still gets its answer counted
+    dialog.addEventListener('close', () => (pending || Promise.resolve()).then(() => resolve(null)), { once: true });
+  });
+
+  // Nothing left to move or delete: the guest's time ran out meanwhile, or another tab already answered
+  if (answer && !answer.count) toast(t('guestGone'), 'info');
+  else if (answer) toast(t(answer.move ? 'guestMoved' : 'guestDeleted'), 'ok');
+  if (answer?.move && answer.count) {
+    await loadSessions();
+    return;
+  }
+  // The login link keeps the address, which may still point at one of those sessions: not this account's
+  if (sessions.some((s) => s._id === sessionIdFromUrl())) setUrl(null, true);
 }
 
 // source: who set it — 'auto' (derived from the "who" answer), 'ai' (suggested on Generate words), 'user'.
@@ -332,14 +503,27 @@ function addWords(list) {
   renderWords();
 }
 
+// A fresh session's first click goes all the way to acronyms (Get acronyms); after that it only adds words.
+// With no runs left it can't, so the button stays "Generate words".
+const getsAcronyms = () => !words().length && !state.session?.acronyms?.length && runsLeft() > 0;
+
+async function onGenerateWords() {
+  const chain = getsAcronyms();
+  const added = await expandBranches(BRANCHES.filter(hasAnswer), { all: true, chain });
+  if (chain && added) await generateAcronyms({ first: true });
+}
+
 // all: triggered by "Generate words", which owns the 'words' busy state even with one answered branch.
-async function expandBranches(branches, { all = false } = {}) {
+// chain: acronyms follow right away, so the words toast stays quiet. Resolves to the number of words added.
+async function expandBranches(branches, { all = false, chain = false } = {}) {
   const key = branches.length === 1 && !all ? `branch:${branches[0]}` : 'words';
+  let added = 0;
   await flushSave();
   await withBusy(key, async () => {
     const sid = state.session._id;
     const titleBefore = state.session.title;
     const data = await api('POST', `/sessions/${sid}/expand`, branches.length === 1 ? { branches } : {});
+    state.usage = data.usage;
     if (state.session?._id !== sid) return;
     state.modelWarm = true;
     // First AI title of the session (the server makes it only once). A rename typed while it ran is newer: keep and resave it.
@@ -354,18 +538,21 @@ async function expandBranches(branches, { all = false } = {}) {
       }
     }
     addWords(data.words);
+    added = data.words.length;
     if (data.words.length && state.step === 'describe') setStep('explore');
-    toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
+    if (!chain || !data.words.length) toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
     for (const [b, e] of Object.entries(data.errors || {})) {
       toast(t('branchFailed', { branch: t(`b_${b}`), message: errorText({ code: e.error, message: e.message }) }));
     }
   });
+  return added;
 }
 
 async function expandWord(id) {
   await withBusy(`word:${id}`, async () => {
     const sid = state.session._id;
     const data = await api('POST', `/sessions/${sid}/words/${id}/expand`);
+    state.usage = data.usage;
     if (state.session?._id !== sid) return;
     state.modelWarm = true;
     addWords(data.words);
@@ -433,13 +620,17 @@ async function bulkSelect(branch, selected) {
 // ---------------------------------------------------------------------------
 // Acronyms
 
-async function generateAcronyms() {
+// first: the run Get acronyms starts on its own, with settings nobody has looked at yet.
+async function generateAcronyms({ first = false } = {}) {
+  setStep('acronyms'); // where the result, and the options a failure points to, are
   const minLength = Number($('#min-length').value);
   const maxLength = Number($('#max-length').value);
   if (!Number.isInteger(minLength) || !Number.isInteger(maxLength) || minLength < 2 || maxLength > 8 || minLength > maxLength) {
+    toggleOptions(true);
     toast(t('lengthError'));
     return;
   }
+  if (first) fitPerBranch(minLength);
   const body = {
     minLength,
     maxLength,
@@ -447,14 +638,25 @@ async function generateAcronyms() {
     allowChunks: $('#chunks').checked,
     maxPerBranch: Number($('#per-branch').value),
   };
-  setStep('acronyms');
   show($('#acronym-status'), false); // the button shows progress; the note returns with the result
   await withBusy('acronyms', async () => {
     const sid = state.session._id;
-    const data = await api('POST', `/sessions/${sid}/acronyms/generate`, body);
+    const data = await api('POST', `/sessions/${sid}/acronyms/generate`, body).catch((err) => {
+      // Fixed in the options (lengths, words per branch): open them under the error
+      if (['not_enough_words', 'length_unreachable'].includes(err.code)) toggleOptions(true);
+      throw err;
+    });
+    state.usage = data.usage;
     if (state.session?._id !== sid) return;
     state.modelWarm = true;
+    // A first run's acronyms are all new: the tag only tells a run's from the ones before it
+    const before = state.session.acronyms.length || state.session.lockedAcronyms;
+    state.newAcronyms = new Set(before ? data.acronyms.map((a) => a._id) : []);
     state.session.acronyms.push(...data.acronyms);
+    state.session.lockedAcronyms = (state.session.lockedAcronyms || 0) + data.locked;
+    // The run ends with its cards, which show once their domains are checked
+    await withBusy('acronymDomains', () => checkRunDomains(sid, data.acronyms));
+    if (state.session?._id !== sid) return;
     renderAcronyms();
     const note = $('#acronym-status');
     note.textContent = data.acronyms.length ? t('acronymsAdded', { n: data.acronyms.length }) : t('noNewAcronyms');
@@ -491,10 +693,55 @@ async function clearAcronyms() {
   try {
     await api('POST', `/sessions/${state.session._id}/acronyms/clear`);
     state.session.acronyms = state.session.acronyms.filter((a) => a.favorite);
+    state.session.lockedAcronyms = 0; // locked ones are never favorites: cleared too
     renderAcronyms();
   } catch (err) {
     fail(err);
   }
+}
+
+// Whether each acronym's .com, .net, .org and .io are registered. A card shows only once its domains were asked
+// about (domainsChecked): a run's acronyms are checked before the run ends (checkRunDomains); the others as the
+// list renders, one batch at a time, in list order. Each answer is kept for the page's life. A batch whose request
+// fails still shows its cards (no badges: a registry outage mustn't hide results); it, and a name the registry
+// didn't answer for, is asked again on a later render, after DOMAIN_RETRY_MS.
+const DOMAIN_BATCH = 10; // the server's cap per request
+const DOMAIN_RETRY_MS = 60 * 1000;
+// acronym id → { list: [{ name, status: 'available' | 'taken' | 'unknown' }], at, checking }
+const domains = new Map();
+let checkingDomains = false;
+
+const domainsChecked = (a) => !!domains.get(a._id)?.at;
+
+// One request for up to DOMAIN_BATCH acronyms of session sid; marked as checking before any await
+async function fetchDomains(sid, batch) {
+  for (const a of batch) domains.set(a._id, { list: [], ...domains.get(a._id), checking: true });
+  let found = {};
+  try {
+    found = (await api('GET', `/sessions/${sid}/domains?ids=${batch.map((a) => a._id).join(',')}`)).domains;
+  } catch { /* asked again later */ }
+  for (const a of batch) domains.set(a._id, { list: found[a._id] || domains.get(a._id).list, at: Date.now() });
+}
+
+async function checkDomains(list) {
+  if (checkingDomains || !state.session) return;
+  const now = Date.now();
+  const todo = list.filter((a) => {
+    const d = domains.get(a._id);
+    if (!d) return true;
+    return !d.checking && (!d.list.length || d.list.some((x) => x.status === 'unknown')) && now - d.at > DOMAIN_RETRY_MS;
+  }).slice(0, DOMAIN_BATCH);
+  if (!todo.length) return;
+  checkingDomains = true;
+  await fetchDomains(state.session._id, todo);
+  checkingDomains = false;
+  renderAcronyms(); // shows the answers, and asks for the next batch
+}
+
+// A run's acronyms, all batches: marked first, so the list's own checks leave them alone
+async function checkRunDomains(sid, list) {
+  for (const a of list) domains.set(a._id, { list: [], checking: true });
+  for (let i = 0; i < list.length; i += DOMAIN_BATCH) await fetchDomains(sid, list.slice(i, i + DOMAIN_BATCH));
 }
 
 // `toastOk: false` when the caller shows its own confirmation next to the button.
@@ -540,8 +787,8 @@ function renderAll({ resetGraph = false } = {}) {
   // The language/model row sits in the header, so it changes the mobile peek height
   if (!isDesktop() && sheet.snap === 'peek' && sheet.height !== snapHeights().peek) setSheet('peek', { animate: false });
   show($('#steps'), has);
+  show($('#wf-footer'), has && state.step !== 'describe');
   show($('#no-session'), !has);
-  show($('#wf-intro'), !has);
   $('#workflow').dataset.empty = String(!has);
   renderMinimize();
   if (!has) {
@@ -572,18 +819,94 @@ function renderBanners() {
   show($('#banner-lang'), !!state.session && state.langHint);
   if (state.session) $('#banner-lang-text').textContent = t('langHint', { lang: t(`lang_${state.session.language}`) });
   $('#new-session').disabled = !state.health.db;
-  $('#empty-new').disabled = !state.health.db;
+  $('#session-search-btn').disabled = !state.health.db;
+  document.querySelectorAll('#empty-new, #sessions-empty-new').forEach((b) => { b.disabled = !state.health.db; });
+  syncPanel();
+}
+
+// The panel starts hidden and stays so until boot knows what it holds, so it never flashes up on load.
+// With no sessions the sidebar's empty state is the call to action, so the panel steps aside, unless
+// it has a DB/LLM banner to show or the sidebar is off screen (mobile drawer, collapsed sidebar).
+function syncPanel() {
+  const sidebarCta = !!$('#sessions-empty-new') && isDesktop() && $('#app').dataset.sidebar === 'expanded';
+  const banner = !$('#banner-db').hidden || !$('#banner-llm').hidden;
+  const visible = booted && (!!state.session || !sidebarCta || banner);
+  const intro = $('#wf-intro');
+  const showIntro = booted && !state.session && !sidebarCta;
+  // Rebuilt only when its wording changes, so a focused button isn't swapped out from under the user
+  const kind = state.sessions.length ? 'closed' : 'none';
+  if (showIntro && intro.dataset.kind !== kind) {
+    intro.replaceChildren(emptyState('empty-new'));
+    intro.dataset.kind = kind;
+  }
+  show(intro, showIntro);
+  if ($('#workflow').hidden === !visible) return;
+  show($('#workflow'), visible);
+  // The mobile sheet's peek height was measured while hidden, without the language/model row
+  if (visible && !isDesktop()) setSheet(sheet.snap, { animate: false });
+  else updateVisible();
+}
+
+// Case- and accent-insensitive, so "ecole" finds "École"
+const fold = (str) => str.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+
+// Every word of the query must appear in the title, in any order
+function filteredSessions() {
+  const terms = fold(state.sessionQuery).split(/\s+/).filter(Boolean);
+  if (!terms.length) return state.sessions;
+  return state.sessions.filter((s) => {
+    const name = fold(s.title || t('untitled'));
+    return terms.every((w) => name.includes(w));
+  });
+}
+
+function setSessionSearch(open) {
+  const input = $('#session-search');
+  $('#session-search-row').hidden = !open;
+  $('#session-search-btn').setAttribute('aria-expanded', String(open));
+  if (open) { input.focus(); input.select(); return; }
+  input.value = '';
+  if (state.sessionQuery) { state.sessionQuery = ''; renderSessions(); }
+}
+
+// Empty state shared by the sidebar list and the panel (#wf-intro): no sessions yet, or none open
+function emptyState(newId) {
+  const none = !state.sessions.length;
+  return h('div', { class: 'flex flex-col items-center text-center' }, [
+    h('span', { class: 'inline-flex size-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-500' }, icon('folder-open', 20)),
+    h('p', { class: 'mt-3 text-base font-semibold text-zinc-800', text: t(none ? 'noSessionsTitle' : 'noSessionOpenTitle') }),
+    h('p', { class: 'mt-1 text-sm text-zinc-500', text: t(none ? 'noSessionsBody' : 'noSessionOpenBody') }),
+    h('button', { type: 'button', id: newId, class: 'btn-primary mt-4 w-full', disabled: !state.health.db, onclick: createSession }, [
+      icon('plus', 20),
+      h('span', { text: t('newSession') }),
+    ]),
+    // Guests only (the account row shows a login link); comes back here after logging in
+    none && $('#account-login') && h('a', {
+      href: '/app/login',
+      class: 'mt-3 text-sm font-medium text-cerise-600 underline underline-offset-2 hover:text-cerise-700',
+      text: t('logInForSessions'),
+      onclick: (e) => { e.currentTarget.href = `/app/login?next=${encodeURIComponent(location.pathname + location.search)}`; },
+    }),
+  ]);
 }
 
 function renderSessions() {
   const list = $('#session-list');
   list.replaceChildren();
   if (!state.sessions.length) {
-    list.append(h('li', { class: 'px-2 py-3 text-base text-zinc-400', text: t('noSessions') }));
+    list.append(h('li', { class: 'px-2 py-6' }, emptyState('sessions-empty-new')));
+    syncPanel();
     return;
   }
-  const fmt = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
-  for (const s of state.sessions) {
+  syncPanel();
+  const shown = filteredSessions();
+  if (!shown.length) {
+    list.append(h('li', { class: 'px-2 py-3 text-base text-zinc-400', text: t('noSessionMatch', { q: state.sessionQuery.trim() }) }));
+    return;
+  }
+  // "10/21/26, 23:55": short enough to share the line with a guest session's "Expires at"
+  const fmt = new Intl.DateTimeFormat('en-US', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  for (const s of shown) {
     const active = state.session?._id === s._id;
     const name = s.title || t('untitled');
     const li = h('li', { class: `group relative flex items-center rounded-md ${active ? 'bg-cerise-50' : 'hover:bg-zinc-100 focus-within:bg-zinc-100'}` });
@@ -595,7 +918,13 @@ function renderSessions() {
       onclick: () => { if (!active) openSession(s._id); else closeDrawer(); },
     }, [
       h('span', { class: `block truncate text-base ${active ? 'font-semibold text-cerise-700' : 'font-medium text-zinc-800'} ${s.title ? '' : 'italic'}`, text: name }),
-      h('span', { class: 'block text-sm text-zinc-400', text: fmt.format(new Date(s.updatedAt)) }),
+      // Last edit, and for a guest's session when it goes
+      h('span', { class: 'block truncate text-sm text-zinc-600' }, [
+        fmt.format(new Date(s.updatedAt)),
+        s.expiresAt != null
+          ? h('span', { text: ` · ${t('expiresAt', { time: shortTime(s.expiresAt) })}`, title: t('expiresAtHint', { time: shortTime(s.expiresAt) }) })
+          : null,
+      ]),
     ]);
     // Actions: with a mouse they float over the title's end on hover/focus (fading it out), so the title
     // gets the full row width otherwise; on touch they're always visible and sit beside it.
@@ -650,6 +979,9 @@ function renderModelSelect() {
   // default, which is also what the server falls back to.
   let current = currentModel();
   if (names.length && !names.includes(current)) current = state.health.defaultModel;
+  // Guests may use only the cheapest model: the others are listed but disabled, and the session shows that one
+  const allowed = state.models.filter((m) => m.allowed !== false).map((m) => m.name);
+  if (allowed.length && !allowed.includes(current)) current = allowed[0];
   if (current && !names.includes(current)) names.unshift(current);
   const usd = (n) => (n ? `$${n}` : 'free');
   sel.replaceChildren(...names.map((n) => {
@@ -657,7 +989,8 @@ function renderModelSelect() {
     // Ollama: size on disk. OpenRouter: price per million tokens, input / output.
     const detail = m?.size ? ` (${(m.size / 1e9).toFixed(1)} GB)`
       : m?.price ? ` (${usd(m.price.in)} / ${usd(m.price.out)} per M)` : '';
-    return h('option', { value: n, text: n + detail });
+    const locked = m?.allowed === false;
+    return h('option', { value: n, text: n + detail + (locked ? ` · ${t('modelSignUp')}` : ''), disabled: locked });
   }));
   sel.value = current;
   sel.disabled = !state.health.llm || !state.session;
@@ -693,8 +1026,17 @@ function onAnswerPaste(e) {
   if (document.execCommand('insertText', false, text.replace(/\s+/g, ' ').slice(0, Math.max(0, room)))) e.preventDefault();
 }
 
-// Replaces the answer with the clipboard text, tidied like a typed paste. insertText keeps it undoable (Ctrl+Z)
-// and fires input, which saves it.
+// Puts text in place of the whole answer. insertText keeps it undoable (Ctrl+Z) and fires input, which saves it.
+function replaceAnswer(ta, text) {
+  ta.focus();
+  ta.select();
+  if (!document.execCommand('insertText', false, text)) {
+    ta.value = text;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+// Replaces the answer with the clipboard text, tidied like a typed paste.
 async function pasteAnswer(ta) {
   let text;
   try {
@@ -704,16 +1046,31 @@ async function pasteAnswer(ta) {
     return;
   }
   const clean = text.replace(/\s+/g, ' ').trim().slice(0, ANSWER_MAX);
-  if (!clean) return;
-  ta.focus();
-  ta.select();
-  if (!document.execCommand('insertText', false, clean)) {
-    ta.value = clean;
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-  }
+  if (clean) replaceAnswer(ta, clean);
 }
 
-// Small icon-only Copy / Paste button under an answer; the label is its tooltip.
+// The AI rewrites the saved answer (an account's share per session: services/usage.js); it replaces the text
+// like a paste, so Ctrl+Z brings the old one back. The answer is read-only meanwhile (renderReformulate).
+async function reformulateAnswer(b) {
+  await flushSave();
+  await withBusy(`reformulate:${b}`, async () => {
+    const sid = state.session._id;
+    const data = await api('POST', `/sessions/${sid}/answers/${b}/reformulate`);
+    state.usage = data.usage;
+    if (state.session?._id !== sid) return;
+    state.modelWarm = true;
+    if (data.answer === answerText(b)) {
+      toast(t('reformulateSame'), 'info');
+      return;
+    }
+    const ta = $(`#answer-${b}`);
+    ta.readOnly = false; // still busy here; renderReformulate would only unlock it afterwards
+    replaceAnswer(ta, data.answer);
+    toast(t('reformulated'), 'ok');
+  });
+}
+
+// Small icon-only Copy / Paste / Reformulate button under an answer; the label is its tooltip.
 function answerTool(name, label, onclick) {
   return h('button', {
     type: 'button',
@@ -754,12 +1111,16 @@ function renderQuestions() {
     copy.setAttribute('aria-label', `${t('copy')}: ${t(`q_${b}`)}`);
     const paste = answerTool('paste', t('paste'), () => pasteAnswer(ta));
     paste.setAttribute('aria-label', `${t('paste')}: ${t(`q_${b}`)}`);
+    const reformulate = answerTool('sparkles', t('reformulate'), () => reformulateAnswer(b));
+    reformulate.dataset.answerReformulate = b;
+    reformulate.setAttribute('aria-label', `${t('reformulate')}: ${t(`q_${b}`)}`);
     wrap.append(h('div', { class: 'flex flex-1 flex-col' }, [
       h('label', { for: id, class: 'flex min-w-0 items-center gap-2 text-base font-medium text-zinc-800' }, [dot(b), t(`q_${b}`)]),
       ta,
       h('div', { class: 'mt-1 flex items-center' }, [
         copy,
         paste,
+        reformulate,
         h('p', { id: `${id}-count`, 'data-answer-count': b, class: 'ml-auto text-right text-xs tabular-nums' }),
       ]),
     ]));
@@ -782,6 +1143,27 @@ function renderAnswerCount(b) {
   }
   const copy = document.querySelector(`[data-answer-copy="${b}"]`);
   if (copy) copy.disabled = !answerText(b).trim();
+  renderReformulate(b);
+}
+
+// An answer's "Reformulate with AI": guests can't (sign up), accounts get the plan's share per session and
+// window. The tooltip says which, or how many are left.
+function renderReformulate(b) {
+  const btn = document.querySelector(`[data-answer-reformulate="${b}"]`);
+  if (!btn) return;
+  const u = state.usage;
+  const busy = state.busy.has(`reformulate:${b}`);
+  const left = reformulationsLeft();
+  btn.replaceChildren(busy ? spinner('', 'size-3.5') : icon('sparkles', 14));
+  btn.setAttribute('aria-busy', String(busy));
+  btn.title = busy ? t('reformulating')
+    : !u ? t('reformulate')
+      : u.plan === 'guest' ? t('reformulateSignUp')
+        : left ? t('reformulateLeft', { left, limit: u.reformulations.limit })
+          : t('reformulateNone', { time: resetTime() });
+  btn.disabled = busy || !left || !state.health.llm || !answerText(b).trim();
+  const ta = $(`#answer-${b}`);
+  if (ta) ta.readOnly = busy;
 }
 
 function onAnswerInput(branch, value) {
@@ -856,16 +1238,32 @@ function renderWords() {
   if (state.panel) renderPanel();
 }
 
-// Longest acronym reachable with the selected words under the words-per-branch cap. Chunks of any length
-// (name-first) have no ceiling; with "Real words only" the dictionary search takes chunks of 2 letters.
-function renderPerBranchHint() {
-  const n = Number($('#per-branch').value);
+// Chunks of any length (name-first) have no ceiling on the acronym's length
+const chunksStretch = () => $('#chunks').checked && !$('#real-only').checked;
+
+// Longest acronym reachable with the selected words under a words-per-branch cap of n. With "Real words only"
+// the dictionary search takes chunks of 2 letters. Mirrors the server's letterCapacity().
+function letterReach(n) {
   const selected = words().filter((w) => w.selected);
   const count = BRANCHES.reduce((sum, b) => sum + Math.min(n, selected.filter((w) => w.branch === b).length), 0);
-  const chunks = $('#chunks').checked;
-  $('#per-branch-hint').textContent = chunks && !$('#real-only').checked
-    ? t('perBranchHintChunks', { n })
-    : t('perBranchHint', { n, max: count * (chunks ? 2 : 1) });
+  return count * ($('#chunks').checked ? 2 : 1);
+}
+
+function renderPerBranchHint() {
+  const n = Number($('#per-branch').value);
+  $('#per-branch-hint').textContent = chunksStretch() ? t('perBranchHintChunks', { n }) : t('perBranchHint', { n, max: letterReach(n) });
+}
+
+// For the first run only: with one or two questions answered, one word per branch can't reach the min
+// length, so allow more (up to 3) rather than fail where the user hasn't seen the settings.
+function fitPerBranch(minLength) {
+  if (chunksStretch()) return;
+  const sel = $('#per-branch');
+  let n = Number(sel.value);
+  while (n < 3 && letterReach(n) < minLength) n++;
+  if (String(n) === sel.value) return;
+  sel.value = String(n);
+  renderPerBranchHint();
 }
 
 function wordChip(w) {
@@ -985,6 +1383,24 @@ function badge(text, cls) {
   return h('span', { class: `rounded-full px-2 py-0.5 text-xs font-medium ${cls}`, text });
 }
 
+// The acronym's domain names (checkDomains), each an icon and its name: none until the first check, or when
+// the request failed. The icon and color say free (green, check) or taken (red, cross); screen readers get
+// the word.
+function domainBadges(a) {
+  const d = domains.get(a._id);
+  const item = (cls, title, children) => h('span', { class: `inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-medium ${cls}`, title }, children);
+  if (!d?.list.length) return d?.checking ? [item('text-zinc-500', null, [spinner('', 'size-3.5'), t('domainChecking')])] : [];
+  const looks = {
+    available: ['text-emerald-700', 'check-circle'],
+    taken: ['text-red-600', 'x-circle'],
+    unknown: ['text-zinc-500', 'help-circle'],
+  };
+  return d.list.map(({ name, status }) => {
+    const [cls, iconName] = looks[status] || looks.unknown;
+    return item(cls, t(`domain.${status}Hint`), [icon(iconName, 16), name, h('span', { class: 'sr-only', text: ` ${t(`domain.${status}`)}` })]);
+  });
+}
+
 function acronymCard(a) {
   // Acronyms from before expansions were written only have their words: show those as a list.
   const phrased = a.parts.every((p) => p.form);
@@ -994,6 +1410,7 @@ function acronymCard(a) {
     expansion.append(...(phrased ? phrasePart(p) : [partNode(p)]));
   });
   const branchesUsed = a.branchCoverage || new Set(a.parts.map((p) => p.branch)).size;
+  const domainRow = domainBadges(a);
   const copyValue = `${a.letters} — ${expansion.textContent}`;
   const ids = a.parts.map((p) => p.wordId);
   const scoreCls = a.score == null ? 'bg-zinc-100 text-zinc-400' : a.score >= 70 ? 'bg-emerald-50 text-emerald-700' : a.score >= 40 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700';
@@ -1006,9 +1423,17 @@ function acronymCard(a) {
   }, [
     h('div', { class: 'flex items-start justify-between gap-2' }, [
       h('p', { class: 'min-w-0 break-all text-2xl font-bold tracking-wide' }, a.parts.map((p) => h('span', { style: { color: COLORS[p.branch] }, text: p.letters }))),
-      h('span', { class: `shrink-0 rounded-md px-1.5 py-0.5 text-sm font-semibold ${scoreCls}`, text: a.score == null ? t('scoreNone') : `${a.score}/100` }),
+      h('div', { class: 'flex shrink-0 items-center gap-1.5' }, [
+        state.newAcronyms.has(a._id) ? badge(t('newAcronym'), 'bg-cerise-50 text-cerise-700') : null,
+        h('span', { class: `rounded-md px-1.5 py-0.5 text-sm font-semibold ${scoreCls}`, text: a.score == null ? t('scoreNone') : `${a.score}/100` }),
+      ]),
     ]),
     expansion,
+    domainRow.length ? h('div', { class: 'mt-1.5' }, [
+      h('p', { class: 'text-sm text-zinc-500', text: t('domainAvailability') }),
+      // One line; scrolls sideways (no scrollbar) when the names don't fit
+      h('div', { class: 'mt-0.5 flex items-center gap-x-3 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' }, domainRow),
+    ]) : null,
     a.rationale ? h('p', { class: 'mt-2 text-base text-zinc-700', text: a.rationale }) : null,
     a.tagline ? h('p', { class: 'mt-1 text-base italic text-zinc-500', text: `“${a.tagline}”` }) : null,
     h('div', { class: 'mt-2 flex items-center gap-1' }, [
@@ -1044,19 +1469,57 @@ function acronymCard(a) {
   return li;
 }
 
+// The way to more: guests sign up (and come back to this session), free users subscribe (not built yet)
+function upgradeCta(label, cls) {
+  if (state.usage?.plan === 'guest') {
+    return h('a', {
+      href: '/app/signup',
+      class: cls,
+      text: label,
+      onclick: (e) => { e.currentTarget.href = `/app/signup?next=${encodeURIComponent(location.pathname + location.search)}`; },
+    });
+  }
+  return h('button', { type: 'button', class: cls, text: label, onclick: () => toast(t('subscribeSoon'), 'info') });
+}
+
+// Acronyms past this plan's share of each run: the server only says how many
+function lockedCard(n) {
+  const guest = state.usage?.plan === 'guest';
+  return h('li', { class: 'rounded-md border border-dashed border-zinc-300 p-4 text-center' }, [
+    h('p', { class: 'flex items-center justify-center gap-1.5 text-sm text-zinc-500' }, [icon('lock', 14), t('lockedAcronyms', { n })]),
+    // Secondary: "Generate acronyms" is the panel's one primary button
+    upgradeCta(t(guest ? 'signUpToSeeMore' : 'subscribeToSeeMore'), 'btn-ghost mt-3 w-full justify-center border border-zinc-200 py-2.5 font-medium text-zinc-700'),
+  ]);
+}
+
 function renderAcronyms() {
   const all = state.session?.acronyms || [];
   const list = sortedAcronyms();
-  $('#acronym-list').replaceChildren(...list.map(acronymCard));
-  const empty = $('#acronym-empty');
-  empty.textContent = all.length ? t('noAcronymsFiltered') : t('noAcronyms');
-  show(empty, !list.length);
-  $('#clear-acronyms').disabled = !all.some((a) => !a.favorite);
+  const locked = state.filter === 'all' ? state.session?.lockedAcronyms || 0 : 0;
+  checkDomains(list); // first: marks this batch as checking, for the cards below
+  const shown = list.filter(domainsChecked);
+  // A run's own wait shows on its button; otherwise one line says more cards are coming
+  const pending = shown.length < list.length && !state.busy.has('acronyms');
+  $('#acronym-list').replaceChildren(
+    ...shown.map(acronymCard),
+    ...(pending ? [h('li', { class: 'flex items-center justify-center gap-2 py-3 text-sm text-zinc-500' }, [spinner('', 'size-3.5'), t('checkingDomains')])] : []),
+    ...(locked ? [lockedCard(locked)] : []),
+  );
+  renderAcronymEmpty();
+  $('#clear-acronyms').disabled = !all.some((a) => !a.favorite) && !state.session?.lockedAcronyms;
   $('#sort').value = state.sort;
   document.querySelectorAll('#filters [data-filter]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
   });
   renderStepsDone();
+}
+
+// Hidden while a run fills the list: the button shows the progress
+function renderAcronymEmpty() {
+  const empty = $('#acronym-empty');
+  const shown = sortedAcronyms().length || (state.filter === 'all' && state.session?.lockedAcronyms);
+  empty.textContent = state.session?.acronyms?.length ? t('noAcronymsFiltered') : t('noAcronyms');
+  show(empty, !shown && !state.busy.has('acronyms'));
 }
 
 // A busy button is disabled by its caller; this only swaps its content.
@@ -1083,17 +1546,57 @@ function renderBusy() {
   const llm = state.health.llm;
   const wordsBusy = state.busy.has('words');
   const gen = $('#generate-words');
-  setButtonBusy(gen, wordsBusy, t('generateWords'), t('generatingWords'), 'sparkles');
+  setButtonBusy(gen, wordsBusy, t(getsAcronyms() ? 'getAcronyms' : 'generateWords'), t('generatingWords'), 'sparkles');
   gen.disabled = !llm || wordsBusy || !BRANCHES.some(hasAnswer) || BRANCHES.some(answerTooShort);
 
   document.querySelectorAll('[data-branch-more]').forEach(renderBranchMore);
+  BRANCHES.forEach(renderReformulate);
 
   const acr = state.busy.has('acronyms');
   const btn = $('#generate-acronyms');
-  setButtonBusy(btn, acr, t('generateAcronyms'), t('generatingAcronyms'), 'sparkles');
-  btn.disabled = !llm || acr || !words().some((w) => w.selected);
+  setButtonBusy(btn, acr, t('generateAcronyms'), t(state.busy.has('acronymDomains') ? 'checkingDomains' : 'generatingAcronyms'), 'sparkles');
+  btn.disabled = !llm || acr || !words().some((w) => w.selected) || runsLeft() === 0;
+  renderAcronymEmpty();
+  renderUsage();
   renderPeekAction();
   if (state.panel) renderPanel();
+}
+
+// ---------------------------------------------------------------------------
+// AI usage: runs left in the plan's window (services/usage.js), and what the plan includes
+
+let usageTimer = null;
+
+const usageOpen = () => !!state.usage?.resetAt && new Date(state.usage.resetAt) > Date.now();
+const runsLeft = () => (state.usage ? Math.max(0, state.usage.runs.limit - (usageOpen() ? state.usage.runs.used : 0)) : Infinity);
+// The open session's reformulations left in the window (0 for guests, or before the usage is known)
+const reformulationsLeft = () => {
+  const r = state.usage?.reformulations;
+  return r ? Math.max(0, r.limit - (usageOpen() ? r.used[state.session?._id] || 0 : 0)) : 0;
+};
+const resetTime = () => (usageOpen() ? new Intl.DateTimeFormat('en-GB', { timeStyle: 'short' }).format(new Date(state.usage.resetAt)) : '');
+
+// "1 of 2 runs left · resets at 14:30" under Generate acronyms. With none left, the button waits for the reset.
+function renderUsage() {
+  const line = $('#usage-runs');
+  const u = state.usage;
+  clearTimeout(usageTimer);
+  show(line, !!u);
+  if (!u) return;
+  const open = usageOpen();
+  if (open) usageTimer = setTimeout(renderBusy, new Date(u.resetAt) - Date.now() + 1000); // the window ends on its own
+  const left = runsLeft();
+  const time = resetTime();
+  line.replaceChildren(left ? t(open ? 'runsLeftReset' : 'runsLeft', { left, limit: u.runs.limit, time }) : t('runsNone', { time }));
+  if (!left && u.plan !== 'paid') {
+    line.append(' · ', upgradeCta(t(u.plan === 'guest' ? 'signUpForRuns' : 'subscribeForRuns'), 'font-medium text-cerise-600 hover:underline'));
+  }
+  for (const [id, allowed] of [['real-only', u.realWords], ['chunks', u.chunks]]) {
+    const box = $(`#${id}`);
+    box.disabled = !allowed;
+    if (!allowed) box.checked = false;
+    show($(`#${id}-plan`), !allowed);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,6 +1604,7 @@ function renderBusy() {
 
 function setStep(step) {
   state.step = step;
+  if (step !== 'acronyms') toggleOptions(false);
   renderStep();
 }
 
@@ -1111,6 +1615,7 @@ function renderStep() {
     tab.tabIndex = on ? 0 : -1;
   });
   document.querySelectorAll('[data-step-panel]').forEach((p) => show(p, p.dataset.stepPanel === state.step));
+  show($('#wf-footer'), !!state.session && state.step !== 'describe');
   renderStepsDone();
   renderPeekAction();
 }
@@ -1133,7 +1638,7 @@ function renderPeekAction() {
   const describe = state.step === 'describe';
   const source = describe ? $('#generate-words') : $('#generate-acronyms');
   const busy = describe ? state.busy.has('words') : state.busy.has('acronyms');
-  const label = describe ? t('generateWords') : t('generateAcronyms');
+  const label = t(!describe ? 'generateAcronyms' : getsAcronyms() ? 'getAcronyms' : 'generateWords');
   btn.replaceChildren(busy ? spinner() : icon('sparkles', 20));
   btn.disabled = source.disabled;
   btn.setAttribute('aria-busy', String(busy));
@@ -1144,6 +1649,12 @@ function renderPeekAction() {
 function onPeekAction() {
   if (state.step === 'describe') $('#generate-words').click();
   else $('#acronym-form').requestSubmit();
+}
+
+// Acronym options dropdown: floats over the list. Closed by Escape, a click outside, or tabbing out of it.
+function toggleOptions(open = $('#options-menu').hidden) {
+  show($('#options-menu'), open);
+  $('#options-btn').setAttribute('aria-expanded', String(open));
 }
 
 // Profile popup (signed-in users only; guests get a plain link to the login page)
@@ -1424,6 +1935,7 @@ function initSidebar() {
 function setSidebar(expanded) {
   $('#app').dataset.sidebar = expanded ? 'expanded' : 'collapsed';
   prefs.set('ui.sidebar', expanded ? 'expanded' : 'collapsed');
+  syncPanel();
   (expanded ? $('#sidebar-collapse') : $('#drawer-open')).focus();
 }
 
@@ -1432,7 +1944,14 @@ function setSidebar(expanded) {
 
 function bindStatic() {
   $('#new-session').addEventListener('click', createSession);
-  $('#empty-new').addEventListener('click', createSession);
+  $('#session-search-btn').addEventListener('click', () => setSessionSearch($('#session-search-row').hidden));
+  $('#session-search-close').addEventListener('click', () => { setSessionSearch(false); $('#session-search-btn').focus(); });
+  $('#session-search').addEventListener('input', (e) => { state.sessionQuery = e.target.value; renderSessions(); });
+  $('#session-search').addEventListener('keydown', (e) => {
+    // Enter opens the top match; Escape closes the search without closing the drawer
+    if (e.key === 'Enter') { e.preventDefault(); $('#session-list li > button')?.click(); }
+    if (e.key === 'Escape') { e.stopPropagation(); setSessionSearch(false); $('#session-search-btn').focus(); }
+  });
   $('#drawer-open').addEventListener('click', () => (isDesktop() ? setSidebar(true) : openDrawer()));
   $('#drawer-close').addEventListener('click', closeDrawer);
   $('#drawer-backdrop').addEventListener('click', closeDrawer);
@@ -1483,15 +2002,12 @@ function bindStatic() {
 
   $('#banner-lang-close').addEventListener('click', () => { state.langHint = false; renderBanners(); });
   document.querySelectorAll('.banner-retry').forEach((b) => b.addEventListener('click', async () => {
-    const hadDb = state.health.db;
-    const hadLlm = state.health.llm;
-    await checkHealth();
-    if (!hadDb && state.health.db) await boot({ skipHealth: true });
-    else if (!hadLlm && state.health.llm) { await loadModels(); renderBusy(); warmup(); }
+    await recheckHealth();
     if (!state.health.db || !state.health.llm) toast(state.health.db ? llmDownText() : t('dbDown'));
   }));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.health.db) recheckHealth(); });
 
-  $('#generate-words').addEventListener('click', () => expandBranches(BRANCHES.filter(hasAnswer), { all: true }));
+  $('#generate-words').addEventListener('click', onGenerateWords);
 
   document.querySelectorAll('[data-graph]').forEach((b) => b.addEventListener('click', () => {
     if (!graph) return;
@@ -1504,6 +2020,11 @@ function bindStatic() {
   }));
 
   $('#acronym-form').addEventListener('submit', (e) => { e.preventDefault(); generateAcronyms(); });
+  $('#options-btn').addEventListener('click', () => toggleOptions());
+  // Tabbing past the last option would land under the menu (sort, filters): close it
+  $('#acronym-options').addEventListener('focusout', (e) => {
+    if (e.relatedTarget && !$('#acronym-options').contains(e.relatedTarget)) toggleOptions(false);
+  });
   $('#per-branch').addEventListener('change', renderPerBranchHint);
   $('#chunks').addEventListener('change', renderPerBranchHint);
   $('#real-only').addEventListener('change', renderPerBranchHint);
@@ -1514,12 +2035,14 @@ function bindStatic() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if ($('#account-menu') && !$('#account-menu').hidden) { toggleAccount(false); $('#account-btn').focus(); return; }
+    if (!$('#options-menu').hidden) { toggleOptions(false); $('#options-btn').focus(); return; }
     if (state.panel) { closePanel(); return; }
     closeDrawer();
     if (!isDesktop() && sheet.snap !== 'peek') setSheet('peek');
   });
   document.addEventListener('pointerdown', (e) => {
     if ($('#account-menu') && !$('#account-menu').hidden && !e.target.closest('#account-menu, #account-btn')) toggleAccount(false);
+    if (!$('#options-menu').hidden && !e.target.closest('#acronym-options')) toggleOptions(false);
     if (!state.panel) return;
     const panel = $('#panel');
     if (panel.contains(e.target) || e.target.closest('#graph') || state.panel.anchor?.contains(e.target)) return;
@@ -1531,7 +2054,7 @@ function bindStatic() {
     if (!isDesktop() && !sheet.drag) applySheetHeight(snapHeights()[sheet.snap], { animate: false, refit: false });
     updateVisible();
   }).observe($('#stage'));
-  mqDesktop.addEventListener('change', () => { closePanel(); closeDrawer(); updateVisible(); });
+  mqDesktop.addEventListener('change', () => { closePanel(); closeDrawer(); syncPanel(); updateVisible(); });
   window.addEventListener('resize', () => closePanel());
 
   window.addEventListener('popstate', () => {
@@ -1553,6 +2076,7 @@ function bindStatic() {
 async function boot({ skipHealth = false } = {}) {
   if (!skipHealth) await checkHealth();
   await Promise.all([loadModels(), loadSessions()]);
+  await offerGuestSessions(); // before opening one: the address may point at a guest session about to move
   const id = sessionIdFromUrl() || state.sessions[0]?._id;
   if (id && state.health.db) {
     await openSession(id, { push: false });
@@ -1561,6 +2085,8 @@ async function boot({ skipHealth = false } = {}) {
     renderAll({ resetGraph: true });
     warmup();
   }
+  booted = true;
+  syncPanel();
 }
 
 initSidebar();

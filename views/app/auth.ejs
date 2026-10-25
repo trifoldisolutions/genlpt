@@ -1,7 +1,6 @@
 <%- include('../partials/head') %>
 <%
-  const signup = mode === 'signup';
-  const q = next === '/app' ? '' : `?next=${encodeURIComponent(next)}`;
+  // Every account page (routes/app.js render()): the form column shows views/app/auth/<screen>, beside the showcase.
   // Showcase: one word per branch (who, what, how, why), read clockwise from top-left
   const branches = [
     { name: 'Who', color: '#4f46e5', node: [128, 120], word: [78, 58], label: [116, 124, 'end'], above: true, leaves: [[48, 118], [150, 46]] },
@@ -21,60 +20,11 @@
 
   <!-- Form column -->
   <div class="flex flex-1 flex-col bg-white px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-8 lg:w-[480px] lg:flex-none">
-    <a href="/app" class="self-start">
-      <span class="block text-lg font-bold leading-tight tracking-tight"><%= appName %></span>
-      <span class="block text-sm text-zinc-500"><%= brand.tagline %></span>
-    </a>
+    <a href="/app" class="self-start text-lg font-bold leading-tight tracking-tight"><%= appName %></a>
 
     <main class="mx-auto flex w-full max-w-sm flex-1 flex-col pb-10 pt-12 lg:justify-center lg:py-10">
-      <h1 class="text-2xl font-bold tracking-tight"><%= signup ? 'Create your account' : 'Welcome back' %></h1>
-      <p class="mt-1 text-base text-zinc-500"><%= signup ? 'Keep your sessions and favorite acronyms in one place.' : 'Log in to pick up your sessions where you left them.' %></p>
-
-      <nav class="mt-6 grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1" aria-label="Account">
-        <% [['login', 'Log in'], ['signup', 'Sign up']].forEach(([m, label]) => { %>
-        <a href="/app/<%= m %><%= q %>" <% if (m === mode) { %>aria-current="page"<% } %> class="rounded-sm px-2 py-1.5 text-center text-base font-medium text-zinc-600 hover:text-zinc-900 aria-[current=page]:bg-white aria-[current=page]:text-zinc-900 aria-[current=page]:shadow-sm pointer-coarse:py-2.5"><%= label %></a>
-        <% }) %>
-      </nav>
-
-      <form id="auth-form" method="post" action="/app/<%= mode %>" class="mt-5 space-y-3">
-        <input type="hidden" name="next" value="<%= next %>">
-        <% if (signup) { %>
-        <label class="block">
-          <span class="label">Name</span>
-          <input type="text" name="name" autocomplete="name" required class="field mt-1">
-        </label>
-        <% } %>
-        <label class="block">
-          <span class="label">Email</span>
-          <input type="email" name="email" autocomplete="email" required class="field mt-1">
-        </label>
-        <div>
-          <label for="password" class="label">Password</label>
-          <div class="relative mt-1">
-            <input type="password" id="password" name="password" autocomplete="<%= signup ? 'new-password' : 'current-password' %>" <% if (signup) { %>minlength="8" aria-describedby="password-hint"<% } %> required class="field pr-11">
-            <button type="button" data-reveal aria-controls="password" aria-pressed="false" aria-label="Show password" title="Show password" class="icon-btn absolute right-0 top-1/2 -translate-y-1/2">
-              <iconify-icon icon="boxicons:eye" width="20" height="20" aria-hidden="true"></iconify-icon>
-            </button>
-          </div>
-          <% if (signup) { %><p id="password-hint" class="mt-1 text-sm text-zinc-500">At least 8 characters.</p><% } %>
-        </div>
-        <button type="submit" class="btn-primary !mt-5 w-full">
-          <iconify-icon icon="<%= signup ? 'boxicons:user-plus' : 'boxicons:arrow-in-right-square-half' %>" width="20" height="20" aria-hidden="true"></iconify-icon>
-          <span><%= signup ? 'Create account' : 'Log in' %></span>
-        </button>
-        <p id="auth-note" hidden role="status" class="rounded-md bg-sky-50 px-3 py-2 text-base text-sky-900">Accounts aren't live yet. Continue as a guest for now.</p>
-      </form>
-
-      <div class="my-5 flex items-center gap-3 text-sm text-zinc-400" aria-hidden="true">
-        <span class="h-px flex-1 bg-zinc-200"></span>or<span class="h-px flex-1 bg-zinc-200"></span>
-      </div>
-      <a href="<%= next %>" class="btn-ghost w-full justify-center border border-zinc-200 py-2.5 font-medium text-zinc-700">
-        Continue as guest
-        <iconify-icon icon="boxicons:arrow-right-stroke" width="18" height="18" aria-hidden="true"></iconify-icon>
-      </a>
+      <%- include('auth/' + (screen === 'signup' ? 'login' : screen)) %>
     </main>
-
-    <a href="<%= brand.company.url %>" target="_blank" rel="noopener" class="self-start text-xs text-zinc-400 hover:text-cerise-600 hover:underline">by <%= brand.company.name %></a>
   </div>
 
   <!-- Showcase: a miniature of the app's graph spelling example acronyms (decorative) -->

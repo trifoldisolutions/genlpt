@@ -1,0 +1,14 @@
+<h1 class="text-2xl font-bold tracking-tight">Reset your password</h1>
+<p class="mt-2 text-base text-zinc-600">Enter the email address you use for <%= appName %>. We'll send you a link to choose a new password.</p>
+
+<form method="post" action="/app/forgot" data-busy class="mt-5 space-y-3">
+  <%- include('_alert') %>
+  <label class="block">
+    <span class="label">Email</span>
+    <input type="email" name="email" value="<%= values.email || '' %>" autocomplete="email" maxlength="254" required class="field mt-1">
+  </label>
+  <button type="submit" class="btn-primary !mt-5 w-full">
+    <span>Send reset link</span>
+  </button>
+</form>
+<a href="/app/login" class="mt-5 self-center text-sm font-medium text-cerise-600 hover:text-cerise-700 hover:underline">Back to log in</a>

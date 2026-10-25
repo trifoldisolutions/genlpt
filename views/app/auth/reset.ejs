@@ -1,0 +1,24 @@
+<%# Behind the reset link: the token is only used up when this form is saved %>
+<h1 class="text-2xl font-bold tracking-tight">Choose a new password</h1>
+<p class="mt-2 text-base text-zinc-600">Enter a new password for <span class="font-medium text-zinc-900"><%= values.email %></span>. Once it's saved, you'll be logged out on your other devices.</p>
+
+<form method="post" action="/app/reset" data-busy class="mt-5 space-y-3">
+  <%- include('_alert') %>
+  <input type="hidden" name="token" value="<%= token %>">
+  <%# For password managers: which account this new password belongs to %>
+  <input type="email" name="username" value="<%= values.email %>" autocomplete="username" hidden readonly>
+  <div>
+    <label for="password" class="label">New password</label>
+    <div class="relative mt-1">
+      <input type="password" id="password" name="password" autocomplete="new-password" minlength="<%= limits.PASSWORD_MIN_CHARS %>" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" aria-describedby="password-hint" required class="field pr-11">
+      <button type="button" data-reveal aria-controls="password" aria-pressed="false" aria-label="Show password" title="Show password" class="icon-btn absolute right-0 top-1/2 -translate-y-1/2">
+        <iconify-icon icon="boxicons:eye" width="20" height="20" aria-hidden="true"></iconify-icon>
+      </button>
+    </div>
+    <p id="password-hint" class="mt-1 text-sm text-zinc-500">At least <%= limits.PASSWORD_MIN_CHARS %> characters.</p>
+  </div>
+  <button type="submit" class="btn-primary !mt-5 w-full">
+    <iconify-icon icon="boxicons:lock" width="20" height="20" aria-hidden="true"></iconify-icon>
+    <span>Save new password</span>
+  </button>
+</form>

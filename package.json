@@ -1,12 +1,14 @@
 {
-  "name": "project_acronym_maker",
+  "name": "genlpt",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
     "tw": "tailwindcss -i ./src/input.css -o ./public/output.css --watch",
     "test": "node --test",
-    "dev:all": "concurrently -k -n TW,SERVER -c yellow,cyan \"npm run tw\" \"npm run dev\""
+    "dev:all": "concurrently -k -n TW,SERVER -c yellow,cyan \"npm run tw\" \"npm run dev\"",
+    "set-role": "node scripts/set-role.js",
+    "usage:report": "node scripts/usage-report.js"
   },
   "keywords": [],
   "author": "",
@@ -15,10 +17,13 @@
   "dependencies": {
     "an-array-of-english-words": "^2.0.0",
     "an-array-of-french-words": "^2.0.0",
+    "argon2": "^0.45.1",
+    "connect-mongo": "^6.0.0",
     "cytoscape": "^3.34.3",
     "dotenv": "^18.0.3",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
+    "express-session": "^1.19.0",
     "mongoose": "^9.10.2"
   },
   "devDependencies": {

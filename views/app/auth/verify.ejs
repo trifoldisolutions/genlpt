@@ -1,0 +1,11 @@
+<%# Behind the confirmation link: nothing happens until the button is pressed (mail scanners open links) %>
+<h1 class="text-2xl font-bold tracking-tight">Confirm your email address</h1>
+<p class="mt-2 text-base text-zinc-600">Confirm that <span class="font-medium text-zinc-900"><%= values.email %></span> is your email address to activate your <%= appName %> account.</p>
+
+<form method="post" action="/app/verify" data-busy class="mt-6">
+  <input type="hidden" name="token" value="<%= token %>">
+  <button type="submit" class="btn-primary w-full">
+    <iconify-icon icon="boxicons:check-circle" width="20" height="20" aria-hidden="true"></iconify-icon>
+    <span>Confirm and continue</span>
+  </button>
+</form>
