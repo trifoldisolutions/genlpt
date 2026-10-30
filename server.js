@@ -12,6 +12,7 @@ const { securityHeaders } = require('./middleware/headers');
 const { requestLog } = require('./middleware/requestLog');
 const { turnstileSiteKey } = require('./services/turnstile');
 const runs = require('./services/runs');
+const { PLAN_OFFERS } = require('./services/usage');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -36,6 +37,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.locals.appName = brand.appName;
 app.locals.brand = brand;
 app.locals.limits = limits;
+app.locals.planOffers = PLAN_OFFERS;
 
 app.use(securityHeaders());
 app.use(express.static(path.join(__dirname, 'public')));

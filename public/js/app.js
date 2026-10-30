@@ -1901,6 +1901,9 @@ function toggleOptions(open = $('#options-menu').hidden) {
 const SETTINGS_TABS = ['general', 'usage', 'billing', 'account'];
 const GUEST_HOURS = Number(document.body.dataset.guestHours) || 3;
 const USAGE_HOURS = Number(document.body.dataset.usageHours) || 5;
+// Each plan's price and the limits people see (services/usage.js PLAN_OFFERS), and the plan Billing compares each with
+const PLAN_OFFERS = (() => { try { return JSON.parse(document.body.dataset.plans); } catch { return {}; } })();
+const NEXT_PLAN = { guest: 'free', free: 'paid' };
 const PREF_LANGUAGE = 'pref.newSessionLanguage'; // new sessions' language; '' or none: the open session's
 const PREF_GRAPH = 'pref.graphLayout'; // how the graph is drawn: one of LAYOUTS in graph.js; none: 'network'
 const PREF_THEME = 'pref.theme'; // read by public/js/theme.js, which puts it on <html> before the page is drawn
@@ -2041,7 +2044,6 @@ const usageLine = (label, value) => h('div', { class: 'flex items-center justify
 const usageNote = (text, extra = 'text-zinc-500') => h('span', { class: `shrink-0 text-sm ${extra}`, text });
 const PLAN_ICONS = { guest: 'user', free: 'user-check', paid: 'crown' };
 const planTag = (text) => h('span', { class: 'shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500', text });
-const includedMark = () => h('span', { class: 'inline-flex shrink-0 items-center gap-1 text-sm text-emerald-700' }, [icon('check', 16), t('included')]);
 
 function settingsHeading(text, aside = null) {
   return h('div', { class: 'flex items-baseline justify-between gap-3' }, [
@@ -2103,45 +2105,80 @@ function planDates(p) {
   return [[t('planStarted'), when(p.startedAt)], [t(p.renews ? 'planRenews' : 'planEnds'), when(p.periodEnd)]];
 }
 
-// The plan: its icon, name and price, the way to more (none past paid), then when it began and when its period ends
-function planCard(u) {
-  const p = state.planInfo?.plan === u.plan ? state.planInfo : null; // its price and dates, once fetched
-  const paid = u.plan === 'paid';
-  const line = paid ? 'border-cerise-200' : 'border-zinc-200';
-  const dates = p ? planDates(p) : [[t('planStarted'), ' '], [t('planEnds'), ' ']];
-  return h('div', { class: `rounded-md border ${line} ${paid ? 'bg-cerise-50/40' : ''}` }, [
-    h('div', { class: 'flex flex-col gap-4 p-4 sm:flex-row sm:items-center' }, [
-      h('div', { class: 'flex min-w-0 flex-1 items-center gap-3' }, [
-        h('span', { class: `inline-flex size-10 shrink-0 items-center justify-center rounded-full ${paid ? 'bg-cerise-100 text-cerise-600' : 'bg-zinc-100 text-zinc-500'}` }, icon(PLAN_ICONS[u.plan], 20)),
-        h('div', { class: 'min-w-0' }, [
-          h('h3', { class: 'text-base font-semibold text-zinc-800', text: t(`plan_${u.plan}`) }),
-          h('p', { class: 'mt-0.5 text-sm text-zinc-500', text: p ? priceText(p.price) : ' ' }),
-        ]),
-      ]),
-      !paid && upgradeCta(t(u.plan === 'guest' ? 'signUpFree' : 'subscribe'), 'btn-primary w-full shrink-0 sm:w-auto'),
+// What a plan offers, in the same order on every card: [amount, label, included]. The amount, when there is one,
+// goes in bold before the label; what isn't included is listed greyed out with a cross.
+function planFeatures(o) {
+  return [
+    [o.runs, t('offerRuns'), true],
+    [o.words, t('offerWords'), true],
+    [o.expansions, t('offerExpansions'), true],
+    o.reformulations ? [o.reformulations, t('offerReformulations'), true] : [null, t('usageReformulations'), false],
+    [o.shown ?? t('featureShownAll'), t('offerShown'), true],
+    [null, t('featureChunks'), o.chunks],
+    [null, t('featureModels'), o.allModels],
+    [null, t('featureRealWords'), o.realWords],
+  ];
+}
+
+function planFeature([amount, label, included]) {
+  return h('li', { class: `flex items-start gap-2 px-4 py-1.5 text-base ${included ? 'text-zinc-700' : 'text-zinc-400'}` }, [
+    icon(included ? 'check' : 'x', 18, `mt-0.5 shrink-0 ${included ? 'text-emerald-600' : 'text-zinc-400'}`),
+    h('span', { class: 'min-w-0' }, [
+      amount != null && h('span', { class: 'font-semibold tabular-nums text-zinc-800', text: `${amount} ` }),
+      label,
+      !included && h('span', { class: 'sr-only', text: ` (${t('notIncluded')})` }),
     ]),
-    h('dl', { class: `grid grid-cols-2 gap-4 border-t px-4 py-3 ${line}` }, dates.map(([label, value]) => h('div', { class: 'min-w-0' }, [
-      h('dt', { class: 'label', text: label }),
-      h('dd', { class: 'mt-0.5 text-base text-zinc-800', text: value }),
-    ]))),
   ]);
 }
 
-// The plan with its price and dates, then what it includes, then an account's payments
+// A plan's card: its icon, name and price, what it offers, then, for the viewer's plan, when it began and when its
+// period ends, or for the plan up, the way to it. Its rows are a subgrid, so each sits level with the one beside it.
+function planCard(plan, current) {
+  const o = PLAN_OFFERS[plan];
+  const paid = plan === 'paid';
+  const line = paid ? 'border-cerise-200' : 'border-zinc-200';
+  const features = o ? planFeatures(o) : [];
+  let footer;
+  if (current) {
+    const p = state.planInfo?.plan === plan ? state.planInfo : null; // its dates, once fetched
+    const dates = p ? planDates(p) : [[t('planStarted'), ' '], [t('planEnds'), ' ']];
+    footer = h('dl', { class: `mt-3 grid grid-cols-2 gap-4 border-t px-4 py-3 ${line}` }, dates.map(([label, value]) => h('div', { class: 'min-w-0' }, [
+      h('dt', { class: 'label', text: label }),
+      h('dd', { class: 'mt-0.5 text-base text-zinc-800', text: value }),
+    ])));
+  } else {
+    footer = h('div', { class: `mt-3 flex items-end border-t px-4 py-3 ${line}` }, upgradeCta(t(plan === 'free' ? 'signUpFree' : 'upgrade'), 'btn-primary w-full'));
+  }
+  return h('div', {
+    class: `grid grid-rows-subgrid rounded-md border ${line} ${paid ? 'bg-cerise-50/40' : ''} ${current ? '' : 'mt-4 @md:mt-0'}`,
+    style: { gridRow: `span ${features.length + 2}` },
+  }, [
+    h('div', { class: 'flex items-center gap-3 px-4 pb-2 pt-4' }, [
+      h('span', { class: `inline-flex size-10 shrink-0 items-center justify-center rounded-full ${paid ? 'bg-cerise-100 text-cerise-600' : 'bg-zinc-100 text-zinc-500'}` }, icon(PLAN_ICONS[plan], 20)),
+      h('div', { class: 'min-w-0' }, [
+        h('div', { class: 'flex flex-wrap items-center gap-x-2 gap-y-1' }, [
+          h('h3', { class: 'text-base font-semibold text-zinc-800', text: t(`plan_${plan}`) }),
+          current && planTag(t('currentPlan')),
+        ]),
+        h('p', { class: 'mt-0.5 text-sm text-zinc-500', text: o ? priceText(o.price) : ' ' }),
+      ]),
+    ]),
+    h('ul', { class: 'contents', role: 'list' }, features.map(planFeature)),
+    footer,
+  ]);
+}
+
+// The viewer's plan next to the plan up (a guest: the free account; free: the paid plan; paid: on its own), side by
+// side once there's room, then an account's payments
 function renderSettingsBilling() {
   const box = $('#settings-billing');
   const u = state.usage;
   if (!u) return box.replaceChildren(unavailable('billingUnavailable'));
+  const next = NEXT_PLAN[u.plan];
   box.replaceChildren(
-    planCard(u),
-    h('div', {}, [
-      settingsHeading(t('inYourPlan')),
-      h('div', { class: 'mt-3 space-y-2.5' }, [
-        usageLine(t('featureShown'), usageNote(u.shown == null ? t('featureShownAll') : String(u.shown), 'tabular-nums text-zinc-500')),
-        usageLine(t('featureChunks'), u.chunks ? includedMark() : planTag(t('accountOnly'))),
-        usageLine(t('featureModels'), u.allModels ? includedMark() : planTag(t('accountOnly'))),
-        usageLine(t('featureRealWords'), u.realWords ? includedMark() : planTag(t('paidOnly'))),
-      ]),
+    h('div', { class: '@container' }, [
+      h('div', { class: `grid gap-x-4 ${next ? '@md:grid-cols-2' : ''}` }, [planCard(u.plan, true), next && planCard(next, false)]),
+      h('p', { class: 'mt-3 max-w-prose text-sm text-zinc-500', text: t('offerPeriodHelp', { hours: USAGE_HOURS }) }),
     ]),
     ...(profile ? [transactionHistory()] : []),
   );

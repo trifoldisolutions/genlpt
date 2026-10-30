@@ -250,7 +250,7 @@ async function suggestTitle(session, answers, model) {
 
 // Public (guests use the app too): llm.isAvailable() keeps its answer, so a flood of these doesn't become
 // calls to the provider. llm: whether this viewer's plan's key works.
-// The host's check before it sends traffic to a new deploy (railway.json): 503 until MongoDB is connected, so the
+// The host's check before it sends traffic to a new deploy (Railway: the service's Healthcheck Path): 503 until MongoDB is connected, so the
 // first visitors don't meet "database unavailable", and again once the server is stopping (services/runs.js)
 router.get('/ready', (req, res) => {
   const ready = dbReady() && runs.accepting();

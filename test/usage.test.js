@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { planOf, planDetails, toView, rankRun, splitAcronyms } = require('../services/usage');
+const { planOf, planDetails, PLAN_OFFERS, toView, rankRun, splitAcronyms } = require('../services/usage');
 const { PLAN_LIMITS } = require('../config/limits');
 const { PLAN_PRICES } = require('../config/pricing');
 const { GUEST_COOKIE } = require('../middleware/owner');
@@ -53,6 +53,15 @@ test('limits grow with the plan', () => {
   assert.deepEqual([guest.allModels, free.allModels, paid.allModels], [false, true, true]);
   // Reformulating needs an account, and then every account gets the same share per session
   assert.deepEqual([guest.reformulations, free.reformulations, paid.reformulations], [0, 5, 5]);
+});
+
+test('billing: each plan offers its price and the limits people see, not the AI work behind a run', () => {
+  for (const plan of ['guest', 'free', 'paid']) {
+    const { price, ...offer } = PLAN_OFFERS[plan];
+    assert.equal(price, PLAN_PRICES[plan]);
+    const { composeCalls, rankMax, ...seen } = PLAN_LIMITS[plan];
+    assert.deepEqual(offer, seen, plan);
+  }
 });
 
 test('reformulations are counted per session, in the open window only', () => {

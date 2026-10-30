@@ -129,6 +129,20 @@ function planDetails(req) {
   };
 }
 
+// What each plan offers, as Settings → Billing compares them: its price, and the limits people see (not the AI
+// work behind a run: composeCalls, rankMax). Shared with the page through a <body> data attribute.
+const PLAN_OFFERS = Object.fromEntries(Object.entries(PLAN_LIMITS).map(([plan, l]) => [plan, {
+  price: PLAN_PRICES[plan] || null,
+  runs: l.runs,
+  words: l.words,
+  expansions: l.expansions,
+  reformulations: l.reformulations,
+  shown: l.shown,
+  chunks: l.chunks,
+  allModels: l.allModels,
+  realWords: l.realWords,
+}]));
+
 // Each acronym of a run gets its place in it, best first: score (unscored last), then the engine's score,
 // the same order as the list's "Score" sort.
 function rankRun(candidates) {
@@ -146,4 +160,4 @@ function splitAcronyms(acronyms, plan) {
   return { visible, locked: acronyms.length - visible.length };
 }
 
-module.exports = { planOf, limitsOf, planDetails, take, giveBack, view, toView, rankRun, splitAcronyms, KINDS };
+module.exports = { planOf, limitsOf, planDetails, PLAN_OFFERS, take, giveBack, view, toView, rankRun, splitAcronyms, KINDS };
