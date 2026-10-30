@@ -84,11 +84,15 @@ const PasswordStrength = (() => {
 
     const update = () => {
       const all = rules(input.value, options);
-      // Each rule ticks once met; on the way there it shows how many so far (2/3), so every key counts visibly
+      // Each rule ticks once met; on the way there it turns red and shows how many so far (2/3), so every key counts
+      // visibly
       for (const { rule, need, have, met } of all) {
+        const started = !met && have > 0;
         items[rule].classList.toggle('text-emerald-700', met);
+        items[rule].classList.toggle('text-red-600', started);
         items[rule].querySelector('iconify-icon').setAttribute('icon', met ? 'boxicons:check-circle' : 'boxicons:circle');
         const counter = items[rule].querySelector('[data-count]');
+        counter.classList.toggle('text-zinc-400', !started); // red too, with its rule
         counter.hidden = met || !have;
         counter.textContent = `${have}/${need}`;
       }

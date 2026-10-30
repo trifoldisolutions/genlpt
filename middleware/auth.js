@@ -4,6 +4,7 @@ const session = require('express-session');
 const { MongoStore } = require('connect-mongo');
 const User = require('../models/User');
 const { rules: passwordRules } = require('../public/js/password');
+const { capitalize } = require('../public/js/name');
 const { LOGIN_DAYS, PASSWORD_MIN_EACH, PASSWORD_MAX_CHARS } = require('../config/limits');
 const { cookieOptions } = require('../config/cookies');
 
@@ -112,7 +113,7 @@ function sameOrigin(req, res, next) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeEmail = (value) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
-const cleanName = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+const cleanName = (value) => (typeof value === 'string' ? capitalize(value.replace(/\s+/g, ' ').trim()) : '');
 
 const emailProblem = (email) => (email.length > 254 || !EMAIL.test(email) ? 'Please enter a valid email address.' : null);
 const nameProblem = (name) => (!name || name.length > 80 ? 'Please enter your name (80 characters max).' : null);

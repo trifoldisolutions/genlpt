@@ -543,7 +543,7 @@
 
             <form id="name-form" hidden novalidate class="mt-4 max-w-md rounded-md border border-zinc-200 p-4">
               <label for="name-input" class="label" data-i18n="nameLabel"></label>
-              <input id="name-input" name="name" type="text" autocomplete="name" maxlength="80" aria-describedby="name-error" class="field mt-1">
+              <input id="name-input" name="name" type="text" autocomplete="name" autocapitalize="words" maxlength="80" aria-describedby="name-error" class="field mt-1">
               <p id="name-error" hidden role="alert" class="mt-3 rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
               <div class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button type="button" data-account-cancel class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
@@ -647,5 +647,6 @@
 
 <script src="/vendor/cytoscape/cytoscape.min.js"></script>
 <script src="/js/password.js"></script>
+<script src="/js/name.js"></script>
 <script type="module" src="/js/app.js"></script>
 <%- include('../partials/foot') %>

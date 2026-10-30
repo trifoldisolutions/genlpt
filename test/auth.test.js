@@ -32,6 +32,7 @@ test('signup input: emails lowercased, names tidied, first problem reported', ()
   assert.equal(normalizeEmail('  Ada@Example.COM '), 'ada@example.com');
   assert.equal(normalizeEmail(['a@b.c']), '');
   assert.equal(cleanName('  Ada \n Lovelace '), 'Ada Lovelace');
+  assert.equal(cleanName('jean-pierre élan McDonald'), 'Jean-Pierre Élan McDonald', 'first letters only');
   const ok = { name: 'Ada', email: 'ada@example.com', password: 'Pebble-Rug-CANYON-742!' };
   assert.equal(signupProblem(ok), null);
   assert.match(signupProblem({ ...ok, name: '' }), /name/);

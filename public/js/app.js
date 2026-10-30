@@ -2443,6 +2443,7 @@ function bindSettings() {
   if (profile) {
     // A global of password.js's (a const: not on window)
     if (typeof PasswordStrength !== 'undefined') passwordChecks = PasswordStrength.watch($('#new-password-hint'), $('#new-password'));
+    if (typeof NameCase !== 'undefined') NameCase.watch($('#name-input')); // name.js's: each word capitalized as typed
     for (const [key, f] of Object.entries(ACCOUNT_FORMS)) {
       const form = $(`#${key}-form`);
       $(`#${f.start}`).addEventListener('click', () => openAccountForm(key));

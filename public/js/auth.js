@@ -1,5 +1,5 @@
-// Account pages: password reveal, a new password's live checks, signup's bot check, busy submit buttons,
-// "Forgot password?" link, and the acronym showcase.
+// Account pages: password reveal, a new password's live checks, signup's name capitals and bot check, busy submit
+// buttons, "Forgot password?" link, and the acronym showcase.
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -21,6 +21,10 @@ document.querySelectorAll('[data-reveal]').forEach((btn) => {
 // so without it the button still works, and the server checks the rules.
 const checks = $('[data-password-checks]');
 if (checks && typeof PasswordStrength !== 'undefined') PasswordStrength.watch(checks, $('#password'));
+
+// Signup's name: each word capitalized as it's typed (NameCase, public/js/name.js)
+const nameField = $('[data-name-case]');
+if (nameField && typeof NameCase !== 'undefined') NameCase.watch(nameField);
 
 // Signup's bot check (Cloudflare Turnstile) usually finishes unseen while the form is filled in. Sent before
 // then, the form says so and waits, without going busy, then sends itself once the check is done.

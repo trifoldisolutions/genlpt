@@ -33,7 +33,7 @@
   <% if (signup) { %>
   <label class="block">
     <span class="label">Name</span>
-    <input type="text" name="name" value="<%= values.name || '' %>" autocomplete="name" maxlength="80" required class="field mt-1">
+    <input type="text" name="name" value="<%= values.name || '' %>" autocomplete="name" autocapitalize="words" maxlength="80" required data-name-case class="field mt-1">
   </label>
   <% } %>
   <label class="block">
