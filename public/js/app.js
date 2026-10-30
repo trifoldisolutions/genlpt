@@ -2092,14 +2092,27 @@ function priceText(price) {
   return t(`pricePer_${price.interval}`, { price: money(price.amount, price.currency) });
 }
 
+// "Oct. 30, 2026", or with the time in place of the year: "Oct. 30, 05:00". Short enough to stay on one line in a
+// plan card's narrow column; the month gets a period when it's cut short (May doesn't)
+function shortDate(at, withTime = false) {
+  const date = new Date(at);
+  const full = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(date);
+  const style = withTime
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+    : { month: 'short', day: 'numeric', year: 'numeric' };
+  return new Intl.DateTimeFormat('en-US', style).formatToParts(date)
+    .map(({ type, value }) => (type === 'month' && value !== full ? `${value}.` : value))
+    .join('');
+}
+
 // When the plan began and when its period ends, as [label, value] pairs ('—' where it isn't known)
 function planDates(p) {
-  const when = (at, style = { dateStyle: 'long' }) => (at ? new Intl.DateTimeFormat('en-GB', style).format(new Date(at)) : '—');
-  const withTime = { dateStyle: 'medium', timeStyle: 'short' };
+  const when = (at, withTime = false) => (at ? shortDate(at, withTime) : '—');
   if (p.plan === 'guest') {
-    // A guest lasts as long as their last session: each is erased GUEST_HOURS after it was last used
+    // A guest lasts as long as their last session: each is erased GUEST_HOURS after it was last used, so the
+    // time matters more than the year
     const end = Math.max(0, ...state.sessions.map((s) => s.expiresAt ?? 0));
-    return [[t('planStarted'), when(p.startedAt, withTime)], [t('planEndsIfUnused'), when(end || null, withTime)]];
+    return [[t('planStarted'), when(p.startedAt, true)], [t('planEndsIfUnused'), when(end || null, true)]];
   }
   if (p.plan === 'free') return [[t('planStarted'), when(p.startedAt)], [t('planEnds'), t('noEndDate')]];
   return [[t('planStarted'), when(p.startedAt)], [t(p.renews ? 'planRenews' : 'planEnds'), when(p.periodEnd)]];
@@ -2150,7 +2163,7 @@ function planCard(plan, current) {
     footer = h('div', { class: `mt-3 flex items-end border-t px-4 py-3 ${line}` }, upgradeCta(t(plan === 'free' ? 'signUpFree' : 'upgrade'), 'btn-primary w-full'));
   }
   return h('div', {
-    class: `grid grid-rows-subgrid rounded-md border ${line} ${paid ? 'bg-cerise-50/40' : ''} ${current ? '' : 'mt-4 @md:mt-0'}`,
+    class: `grid grid-rows-subgrid rounded-md border ${line} ${paid ? 'bg-cerise-50/40' : ''} ${current ? '' : 'mt-4 @lg:mt-0'}`,
     style: { gridRow: `span ${features.length + 2}` },
   }, [
     h('div', { class: 'flex items-center gap-3 px-4 pb-2 pt-4' }, [
@@ -2177,7 +2190,7 @@ function renderSettingsBilling() {
   const next = NEXT_PLAN[u.plan];
   box.replaceChildren(
     h('div', { class: '@container' }, [
-      h('div', { class: `grid gap-x-4 ${next ? '@md:grid-cols-2' : ''}` }, [planCard(u.plan, true), next && planCard(next, false)]),
+      h('div', { class: `grid gap-x-4 ${next ? '@lg:grid-cols-2' : ''}` }, [planCard(u.plan, true), next && planCard(next, false)]),
       h('p', { class: 'mt-3 max-w-prose text-sm text-zinc-500', text: t('offerPeriodHelp', { hours: USAGE_HOURS }) }),
     ]),
     ...(profile ? [transactionHistory()] : []),
@@ -2205,12 +2218,12 @@ const TRANSACTION_STATUS = {
 // One payment: what it was for and when, its amount and status, and the provider's receipt when there is one
 function transactionRow(tx) {
   const receipt = /^https:\/\//.test(tx.receiptUrl || '')
-    ? h('a', { href: tx.receiptUrl, target: '_blank', rel: 'noopener noreferrer', class: 'icon-btn', 'aria-label': t('receiptFor', { date: longDate(tx.date) }), title: t('receipt') }, icon('receipt', 18))
+    ? h('a', { href: tx.receiptUrl, target: '_blank', rel: 'noopener noreferrer', class: 'icon-btn', 'aria-label': t('receiptFor', { date: shortDate(tx.date) }), title: t('receipt') }, icon('receipt', 18))
     : h('span', { class: 'size-10 shrink-0', 'aria-hidden': 'true' }); // keeps the amounts lined up
   return h('li', { class: 'flex items-center gap-3 py-2 pl-4 pr-2' }, [
     h('div', { class: 'min-w-0 flex-1' }, [
       h('p', { class: 'truncate text-base text-zinc-800', text: t(`plan_${tx.plan}`) }),
-      h('p', { class: 'text-sm text-zinc-500', text: longDate(tx.date) }),
+      h('p', { class: 'text-sm text-zinc-500', text: shortDate(tx.date) }),
     ]),
     h('div', { class: 'flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3' }, [
       h('span', { class: 'text-base tabular-nums text-zinc-800', text: money(tx.amount, tx.currency, true) }),
@@ -2219,8 +2232,6 @@ function transactionRow(tx) {
     receipt,
   ]);
 }
-
-const longDate = (at) => new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' }).format(new Date(at));
 
 // Transaction history: the account's payments, newest first (GET /api/account/transactions)
 function transactionHistory() {
