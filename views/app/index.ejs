@@ -2,8 +2,8 @@
 <div id="app" data-sidebar="expanded" class="flex h-dvh overflow-hidden">
 
   <!-- Sidebar: sessions (off-canvas drawer below lg) -->
-  <div id="drawer-backdrop" hidden class="fixed inset-0 z-40 bg-zinc-900/30 lg:hidden"></div>
-  <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] -translate-x-full flex-col border-r border-zinc-200 bg-white transition-transform lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 lg:transition-none" aria-labelledby="sessions-heading">
+  <div id="drawer-backdrop" hidden class="fixed inset-0 z-40 bg-scrim/30 lg:hidden"></div>
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] -translate-x-full flex-col border-r border-zinc-200 bg-surface transition-transform lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 lg:transition-none" aria-labelledby="sessions-heading">
     <div class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
       <span class="min-w-0 truncate px-1 text-lg font-bold leading-tight tracking-tight"><%= appName %></span>
       <button type="button" id="drawer-close" class="icon-btn lg:hidden" data-i18n-aria="closeSessions" data-i18n-title="closeSessions">
@@ -35,44 +35,31 @@
       </div>
     </div>
     <ul id="session-list" class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-4"></ul>
-    <!-- Account row: user (left), app settings (right). Guests get a link to the login page; users get a profile popup. -->
+    <!-- Account row: the badge (left) opens the settings dialog (#settings-dialog); on the right, Log out, or Log in for a guest -->
     <div class="flex items-center gap-1 border-t border-zinc-200 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
-      <% if (user) { %>
-      <div class="relative min-w-0 flex-1">
-        <button type="button" id="account-btn" class="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100" aria-haspopup="true" aria-expanded="false" aria-controls="account-menu" data-i18n-aria="account" data-i18n-title="account">
-          <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-base font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
-          <span class="truncate text-base font-medium text-zinc-800"><%= user.name || user.email %></span>
-        </button>
-        <div id="account-menu" hidden class="absolute bottom-full left-0 z-10 mb-1 w-full min-w-56 rounded-md border border-zinc-200 bg-white p-1.5 shadow-lg">
-          <div class="flex items-center gap-2.5 px-2 py-2">
-            <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-lg font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
-            <div class="min-w-0">
-              <span class="block truncate text-base font-semibold text-zinc-900"><%= user.name || user.email %></span>
-              <% if (user.name && user.email) { %><span class="block truncate text-sm text-zinc-500"><%= user.email %></span><% } %>
-            </div>
-          </div>
-          <div class="my-1 border-t border-zinc-100"></div>
-          <form method="post" action="/app/logout">
-            <button type="submit" class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-base text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900">
-              <iconify-icon icon="boxicons:arrow-out-right-square-half" width="18" height="18" aria-hidden="true"></iconify-icon>
-              <span data-i18n="logOut">Log out</span>
-            </button>
-          </form>
-        </div>
-      </div>
-      <% } else { %>
-      <a href="/app/login" id="account-login" class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-100" data-i18n-title="logIn">
-        <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-base font-semibold text-cerise-700" aria-hidden="true">
+      <button type="button" id="account-btn" class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100" aria-haspopup="dialog" aria-controls="settings-dialog" data-i18n-title="settings">
+        <% if (user) { %>
+        <span id="account-initial" class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-base font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
+        <span id="account-name" class="truncate text-base font-medium text-zinc-800"><%= user.name || user.email %></span>
+        <% } else { %>
+        <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-cerise-700" aria-hidden="true">
           <iconify-icon icon="boxicons:user" width="18" height="18"></iconify-icon>
         </span>
-        <span class="min-w-0">
-          <span class="block truncate text-base font-medium leading-tight text-zinc-800" data-i18n="guest">Guest</span>
-        </span>
+        <span id="account-name" class="truncate text-base font-medium text-zinc-800" data-i18n="guest">Guest</span>
+        <% } %>
+      </button>
+      <% if (user) { %>
+      <!-- Saves any pending edit first (bindStatic in app.js), then logs out: one click, so nothing typed is lost -->
+      <form id="logout-form" method="post" action="/app/logout" class="shrink-0">
+        <button type="submit" class="icon-btn" data-i18n-aria="logOut" data-i18n-title="logOut">
+          <iconify-icon icon="boxicons:arrow-out-right-square-half" width="20" height="20" aria-hidden="true"></iconify-icon>
+        </button>
+      </form>
+      <% } else { %>
+      <a href="/app/login" id="account-login" class="icon-btn" data-i18n-aria="logIn" data-i18n-title="logIn">
+        <iconify-icon icon="boxicons:arrow-in-right-square-half" width="20" height="20" aria-hidden="true"></iconify-icon>
       </a>
       <% } %>
-      <button type="button" id="app-settings-btn" class="icon-btn" data-i18n-aria="settings" data-i18n-title="settings">
-        <iconify-icon icon="boxicons:cog" width="20" height="20" aria-hidden="true"></iconify-icon>
-      </button>
     </div>
   </aside>
 
@@ -87,23 +74,23 @@
       <iconify-icon icon="boxicons:arrow-left-stroke" width="20" height="20" class="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-300 max-lg:hidden" aria-hidden="true"></iconify-icon>
       <div class="flex flex-col items-center text-center">
         <svg viewBox="0 0 240 180" class="h-auto w-56 opacity-70 sm:w-64" aria-hidden="true" fill="none">
-          <g stroke="#d4d4d8" stroke-width="1">
+          <g class="stroke-zinc-300" stroke-width="1">
             <path d="M120 90 L72 50 M120 90 L168 50 M120 90 L168 130 M120 90 L72 130"/>
             <path d="M72 50 L40 30 M72 50 L52 72 M72 50 L84 18"/>
             <path d="M168 50 L200 28 M168 50 L196 66 M200 28 L226 20"/>
             <path d="M168 130 L204 146 M168 130 L182 162 M168 130 L206 116"/>
             <path d="M72 130 L36 142 M72 130 L58 162 M36 142 L14 130"/>
           </g>
-          <g fill="#e4e4e7">
+          <g class="fill-zinc-200">
             <circle cx="40" cy="30" r="4"/><circle cx="52" cy="72" r="4"/><circle cx="84" cy="18" r="3.5"/>
             <circle cx="200" cy="28" r="4.5"/><circle cx="196" cy="66" r="3.5"/><circle cx="226" cy="20" r="3"/>
             <circle cx="204" cy="146" r="4"/><circle cx="182" cy="162" r="3.5"/><circle cx="206" cy="116" r="3.5"/>
             <circle cx="36" cy="142" r="4.5"/><circle cx="58" cy="162" r="3.5"/><circle cx="14" cy="130" r="3"/>
           </g>
-          <g fill="#d4d4d8">
+          <g class="fill-zinc-300">
             <circle cx="72" cy="50" r="7"/><circle cx="168" cy="50" r="7"/><circle cx="168" cy="130" r="7"/><circle cx="72" cy="130" r="7"/>
           </g>
-          <circle cx="120" cy="90" r="11" fill="#d4d4d8" stroke="#e4e4e7" stroke-width="5"/>
+          <circle cx="120" cy="90" r="11" class="fill-zinc-300 stroke-zinc-200" stroke-width="5"/>
         </svg>
         <h1 id="canvas-empty-title" class="mt-5 text-lg font-semibold text-zinc-800"></h1>
         <p id="canvas-empty-body" class="mt-1 max-w-[32ch] text-base text-zinc-500"></p>
@@ -112,7 +99,7 @@
 
     <!-- Floating top bar: menu + wordmark (mobile), menu only when the sidebar is collapsed (desktop) -->
     <div id="topbar" class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:px-4 lg:pt-4">
-      <button type="button" id="drawer-open" class="icon-btn pointer-events-auto border border-zinc-200 bg-white/90 shadow-sm backdrop-blur" aria-controls="sidebar" data-i18n-aria="openSessions" data-i18n-title="openSessions">
+      <button type="button" id="drawer-open" class="icon-btn pointer-events-auto border border-zinc-200 bg-surface/90 shadow-sm backdrop-blur" aria-controls="sidebar" data-i18n-aria="openSessions" data-i18n-title="openSessions">
         <iconify-icon icon="boxicons:menu" width="20" height="20" aria-hidden="true"></iconify-icon>
       </button>
       <span class="text-lg font-bold tracking-tight lg:hidden"><%= appName %></span>
@@ -120,8 +107,8 @@
 
     <!-- Legend + map controls -->
     <div id="canvas-ui" hidden class="pointer-events-none absolute bottom-[calc(var(--sheet-peek)+0.75rem)] right-3 z-20 flex flex-col items-end gap-2 lg:bottom-4 lg:right-4">
-      <ul id="legend" class="pointer-events-auto hidden flex-col gap-1 rounded-md border border-zinc-200 bg-white/80 px-2.5 py-2 text-sm text-zinc-600 backdrop-blur sm:flex"></ul>
-      <div role="toolbar" aria-orientation="vertical" data-i18n-aria="mapControls" class="pointer-events-auto flex flex-col divide-y divide-zinc-100 rounded-md border border-zinc-200 bg-white/90 shadow-sm backdrop-blur">
+      <ul id="legend" class="pointer-events-auto hidden flex-col gap-1 rounded-md border border-zinc-200 bg-surface/80 px-2.5 py-2 text-sm text-zinc-600 backdrop-blur sm:flex"></ul>
+      <div role="toolbar" aria-orientation="vertical" data-i18n-aria="mapControls" class="pointer-events-auto flex flex-col divide-y divide-zinc-100 rounded-md border border-zinc-200 bg-surface/90 shadow-sm backdrop-blur">
         <button type="button" data-graph="zoom-in" class="icon-btn" data-i18n-aria="zoomIn" data-i18n-title="zoomIn">
           <iconify-icon icon="boxicons:plus" width="20" height="20" aria-hidden="true"></iconify-icon>
         </button>
@@ -138,28 +125,35 @@
     </div>
 
     <!-- Workflow panel: floating card (desktop), bottom sheet (mobile). Starts hidden; syncPanel() in app.js shows it after boot -->
-    <section id="workflow" hidden data-min="false" aria-labelledby="title" class="absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-md border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgb(0_0_0/0.08)] lg:bottom-4 lg:left-4 lg:right-auto lg:top-4 lg:w-[360px] lg:rounded-md lg:border lg:bg-white/95 lg:pb-0 lg:shadow-lg lg:backdrop-blur">
+    <section id="workflow" hidden data-min="false" aria-labelledby="title" class="absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-md border-t border-zinc-200 bg-surface pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgb(0_0_0/0.08)] lg:bottom-4 lg:left-4 lg:right-auto lg:top-4 lg:w-[360px] lg:rounded-md lg:border lg:bg-surface/95 lg:pb-0 lg:shadow-lg lg:backdrop-blur">
       <button type="button" id="sheet-handle" class="flex h-6 w-full shrink-0 touch-none items-center justify-center lg:hidden" data-i18n-aria="resizeSheet" data-i18n-title="resizeSheet">
         <span class="h-1 w-10 rounded-full bg-zinc-300" aria-hidden="true"></span>
       </button>
 
       <header class="shrink-0 px-2 pb-2 lg:py-2">
-        <!-- Session language + model, right above the title -->
+        <!-- Session language + model, right above the title. Compact custom dropdowns (customSelect() in
+             public/js/select.js) over these selects, which they hide and keep as the value -->
         <div id="session-meta" hidden class="wf-hide-min flex min-w-0 items-center gap-1.5 pb-1">
-          <select id="language" class="meta-select w-auto shrink-0" data-i18n-aria="language" data-i18n-title="language">
-            <option value="fr" data-i18n="lang_fr">French</option>
-            <option value="en" data-i18n="lang_en">English</option>
-          </select>
-          <select id="model" class="meta-select min-w-0 flex-1 truncate" data-i18n-aria="model" data-i18n-title="model"></select>
+          <div class="shrink-0">
+            <select id="language" data-i18n-aria="language">
+              <option value="fr" data-i18n="lang_fr">French</option>
+              <option value="en" data-i18n="lang_en">English</option>
+              <option value="es" data-i18n="lang_es">Spanish</option>
+              <option value="ht" data-i18n="lang_ht">Haitian Creole</option>
+            </select>
+          </div>
+          <div class="min-w-0 flex-1">
+            <select id="model" data-i18n-aria="model" data-i18n-title="model"></select>
+          </div>
         </div>
         <div class="flex items-center gap-1 py-2">
           <div id="session-bar" hidden class="flex min-w-0 flex-1 items-center gap-1">
             <input id="title" type="text" maxlength="120" data-i18n-aria="titleLabel" class="min-w-0 flex-1 truncate rounded-md bg-zinc-100 px-2 py-1.5 text-lg font-semibold text-zinc-900 placeholder:font-medium placeholder:text-zinc-400 hover:bg-zinc-200 focus:bg-zinc-100 focus-visible:outline-none">
             <span id="save-status" class="wf-hide-min shrink-0 text-sm text-zinc-400" aria-live="polite"></span>
-            <button type="button" id="peek-action" class="icon-btn bg-cerise-600 text-white enabled:hover:bg-cerise-700 lg:hidden"></button>
+            <button type="button" id="peek-action" class="icon-btn relative bg-brand text-on-brand enabled:hover:bg-brand-hover lg:hidden"></button>
           </div>
           <p id="no-session" class="min-w-0 flex-1 truncate px-2 text-base font-medium text-zinc-500" data-i18n="noSession"></p>
-          <button type="button" id="wf-min" class="icon-btn max-lg:hidden" aria-expanded="true" aria-controls="workflow-body">
+          <button type="button" id="wf-min" class="icon-btn relative max-lg:hidden" aria-expanded="true" aria-controls="workflow-body">
             <iconify-icon icon="boxicons:chevrons-up" width="20" height="20" aria-hidden="true"></iconify-icon>
           </button>
         </div>
@@ -200,11 +194,6 @@
             <span id="banner-llm-text" class="min-w-0 flex-1"></span>
             <button type="button" class="banner-retry shrink-0 font-medium underline" data-i18n="retry">Retry</button>
           </div>
-          <div id="banner-lang" hidden class="flex items-start gap-2 rounded-md bg-sky-50 px-3 py-2 text-base text-sky-900" role="status">
-            <iconify-icon icon="boxicons:info-circle" width="18" height="18" class="mt-px" aria-hidden="true"></iconify-icon>
-            <span id="banner-lang-text" class="min-w-0 flex-1"></span>
-            <button type="button" id="banner-lang-close" class="shrink-0 font-medium underline" data-i18n="dismiss">Dismiss</button>
-          </div>
         </div>
 
         <!-- No session: filled by emptyState() in app.js, same as the sidebar's -->
@@ -236,7 +225,7 @@
                 <span class="min-w-0 flex-1 text-left" data-i18n="acronymOptions"></span>
                 <iconify-icon icon="boxicons:chevron-down" width="18" height="18" class="transition-transform group-aria-expanded:rotate-180" aria-hidden="true"></iconify-icon>
               </button>
-              <div id="options-menu" hidden class="absolute inset-x-0 top-full z-20 mt-1 rounded-md border border-zinc-400/70 bg-white shadow-[0_2px_4px_rgb(0_0_0/0.08),0_12px_32px_-2px_rgb(0_0_0/0.25)]">
+              <div id="options-menu" hidden class="absolute inset-x-0 top-full z-20 mt-1 rounded-md border border-zinc-400/70 bg-surface shadow-[0_2px_4px_rgb(0_0_0/0.08),0_12px_32px_-2px_rgb(0_0_0/0.25)]">
                 <!-- novalidate: the fields may be hidden (menu closed, or another step) when the footer button submits; generateAcronyms() checks them -->
                 <form id="acronym-form" novalidate class="grid grid-cols-2 gap-3 p-3">
                   <label>
@@ -260,6 +249,8 @@
                     <input id="real-only" type="checkbox" class="size-4 shrink-0 rounded-sm accent-cerise-600 disabled:cursor-not-allowed">
                     <span data-i18n="realWordsOnly"></span>
                     <span id="real-only-plan" hidden class="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500" data-i18n="paidOnly"></span>
+                    <!-- In place of the plan's tag when the session language has no word list (renderRealOnly() in app.js) -->
+                    <span id="real-only-lang" hidden class="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500"></span>
                   </label>
                   <label class="col-span-2 flex items-center gap-2 text-base text-zinc-700 has-[:disabled]:cursor-not-allowed has-[:disabled]:text-zinc-400">
                     <input id="chunks" type="checkbox" class="size-4 shrink-0 rounded-sm accent-cerise-600 disabled:cursor-not-allowed">
@@ -279,9 +270,9 @@
                 <option value="newest" data-i18n="sortNewest"></option>
               </select>
               <div id="filters" class="inline-flex shrink-0 rounded-md bg-zinc-100 p-0.5 text-sm" role="group">
-                <button type="button" data-filter="all" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-white aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterAll"></button>
-                <button type="button" data-filter="fav" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-white aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterFav"></button>
-                <button type="button" data-filter="real" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-white aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterReal"></button>
+                <button type="button" data-filter="all" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-surface aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterAll"></button>
+                <button type="button" data-filter="fav" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-surface aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterFav"></button>
+                <button type="button" data-filter="real" class="whitespace-nowrap rounded-sm px-1.5 py-1.5 font-medium text-zinc-600 hover:text-zinc-900 aria-pressed:bg-surface aria-pressed:text-zinc-900 aria-pressed:shadow-sm" data-i18n="filterReal"></button>
               </div>
               <button type="button" id="clear-acronyms" class="icon-btn ml-auto text-red-600" data-i18n-aria="clearNonFav" data-i18n-title="clearNonFav">
                 <iconify-icon icon="boxicons:trash-x" width="20" height="20" aria-hidden="true"></iconify-icon>
@@ -295,25 +286,43 @@
 
       <!-- Explore and Acronyms share this button, pinned under the scrolling list (renderStep() in app.js shows it) -->
       <footer id="wf-footer" hidden class="wf-hide-min shrink-0 space-y-1.5 border-t border-zinc-200 px-3 py-3">
+        <!-- Selected words added since the last run; filled by renderNewWords() in app.js -->
+        <p id="new-words-hint" hidden class="flex items-center justify-center gap-1.5 text-sm font-medium text-cerise-700"></p>
         <button type="submit" form="acronym-form" id="generate-acronyms" class="btn-primary w-full"></button>
         <!-- Runs left in this usage window; filled by renderUsage() in app.js -->
         <p id="usage-runs" hidden class="text-center text-sm text-zinc-500" aria-live="polite"></p>
       </footer>
     </section>
+
+    <!-- This session is open in another tab (public/js/tabs.js): the stage waits behind this, inert, until Use here -->
+    <div id="elsewhere" hidden class="absolute inset-0 z-40 flex items-center justify-center bg-scrim/30 p-4 backdrop-blur-[2px]">
+      <div role="alertdialog" aria-labelledby="elsewhere-title" aria-describedby="elsewhere-body" class="w-full max-w-sm rounded-md border border-zinc-200 bg-surface p-5 text-zinc-800 shadow-xl">
+        <div class="flex items-start gap-3">
+          <iconify-icon icon="boxicons:info-circle" width="22" height="22" class="mt-px shrink-0 text-sky-600" aria-hidden="true"></iconify-icon>
+          <div class="min-w-0">
+            <h2 id="elsewhere-title" class="text-lg font-semibold" data-i18n="elsewhereTitle"></h2>
+            <p id="elsewhere-body" class="mt-1 text-base text-zinc-500" data-i18n="elsewhereBody"></p>
+          </div>
+        </div>
+        <div class="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" id="elsewhere-sessions" class="btn-ghost" data-i18n="elsewhereSessions"></button>
+          <button type="button" id="elsewhere-use" class="btn-primary" data-i18n="useHere"></button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 
 <!-- Node popover (graph nodes + word chips) -->
-<div id="panel" hidden class="fixed z-50 w-60 rounded-md border border-zinc-200 bg-white p-1.5 text-base shadow-lg" role="dialog" aria-modal="false"></div>
+<div id="panel" hidden class="fixed z-50 w-60 rounded-md border border-zinc-200 bg-surface p-1.5 text-base shadow-lg" role="dialog" aria-modal="false"></div>
 
 <% if (user) { %>
 <!-- Guest sessions left in this browser from before logging in (maybe someone else's on a shared computer):
      move them to this account or delete them. Opened and filled by offerGuestSessions() in app.js -->
-<dialog id="guest-dialog" aria-labelledby="guest-dialog-title" aria-describedby="guest-dialog-body" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-md border border-zinc-200 bg-white p-5 text-zinc-800 shadow-xl backdrop:bg-zinc-900/40">
+<dialog id="guest-dialog" aria-labelledby="guest-dialog-title" aria-describedby="guest-dialog-body" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-md border border-zinc-200 bg-surface p-5 text-zinc-800 shadow-xl backdrop:bg-scrim/40">
   <h2 id="guest-dialog-title" class="text-lg font-semibold text-zinc-900" data-i18n="guestDialogTitle"></h2>
   <p id="guest-dialog-body" class="mt-1 text-base text-zinc-600"></p>
   <ul id="guest-dialog-list" class="mt-3 max-h-48 divide-y divide-zinc-100 overflow-y-auto rounded-md border border-zinc-200"></ul>
-  <p id="guest-dialog-error" hidden role="alert" class="mt-3 rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
   <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
     <button type="button" id="guest-delete" class="btn-ghost justify-center border border-zinc-200 px-4 py-2.5 font-medium text-zinc-700"></button>
     <button type="button" id="guest-move" class="btn-primary" autofocus></button>
@@ -321,9 +330,322 @@
 </dialog>
 <% } %>
 
+<!-- Asks before an action (log out, delete a session or a word, clear acronyms): filled and opened by askConfirm() in app.js -->
+<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body" class="m-auto w-[calc(100%-2rem)] max-w-sm rounded-md border border-zinc-200 bg-surface p-0 text-zinc-800 shadow-xl backdrop:bg-scrim/40">
+  <div class="p-5">
+    <h2 id="confirm-title" class="text-lg font-semibold text-zinc-900"></h2>
+    <p id="confirm-body" class="mt-1 text-base text-zinc-600"></p>
+    <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <button type="button" id="confirm-cancel" class="btn-ghost justify-center border border-zinc-200 px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+      <button type="button" id="confirm-ok" class="btn-primary"></button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Settings: opened on a tab from the cog's menu (or Account settings in the profile popup) by openSettings() in app.js -->
+<dialog id="settings-dialog" aria-labelledby="settings-title" class="m-auto h-[min(38rem,calc(100dvh-2rem))] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-md border border-zinc-200 bg-surface p-0 text-zinc-800 shadow-xl backdrop:bg-scrim/40">
+  <div id="settings-main" class="flex h-full flex-col">
+    <header class="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 py-2 pl-5 pr-2">
+      <h2 id="settings-title" class="text-lg font-semibold text-zinc-900" data-i18n="settings">Settings</h2>
+      <button type="button" id="settings-close" class="icon-btn" data-i18n-aria="close" data-i18n-title="close">
+        <iconify-icon icon="boxicons:x" width="20" height="20" aria-hidden="true"></iconify-icon>
+      </button>
+    </header>
+    <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
+      <div role="tablist" aria-orientation="vertical" data-i18n-aria="settings" class="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-2 sm:w-48 sm:flex-col sm:border-b-0 sm:border-r sm:p-3">
+        <button type="button" role="tab" id="settings-tab-general" data-settings-tab="general" aria-controls="settings-general" aria-selected="true" class="settings-tab">
+          <iconify-icon icon="boxicons:slider-alt" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span data-i18n="settingsGeneral">General</span>
+        </button>
+        <button type="button" role="tab" id="settings-tab-usage" data-settings-tab="usage" aria-controls="settings-usage" aria-selected="false" tabindex="-1" class="settings-tab">
+          <iconify-icon icon="boxicons:bar-chart-big" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span data-i18n="settingsUsage">Usage</span>
+        </button>
+        <button type="button" role="tab" id="settings-tab-billing" data-settings-tab="billing" aria-controls="settings-billing" aria-selected="false" tabindex="-1" class="settings-tab">
+          <iconify-icon icon="boxicons:credit-card" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span data-i18n="settingsBilling">Billing</span>
+        </button>
+        <button type="button" role="tab" id="settings-tab-account" data-settings-tab="account" aria-controls="settings-account" aria-selected="false" tabindex="-1" class="settings-tab">
+          <iconify-icon icon="boxicons:user" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span data-i18n="account">Account</span>
+        </button>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-width:thin]">
+
+        <section id="settings-general" data-settings-panel="general" role="tabpanel" aria-labelledby="settings-tab-general" class="space-y-6">
+          <div>
+            <label for="pref-language" class="block text-base font-semibold text-zinc-800" data-i18n="newSessionLanguage"></label>
+            <p id="pref-language-help" class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="newSessionLanguageHelp"></p>
+            <!-- Custom dropdown (customSelect() in public/js/select.js) over this select, which it hides and keeps as the value -->
+            <div class="mt-3 max-w-xs">
+              <select id="pref-language" aria-describedby="pref-language-help" class="field">
+                <option value="" data-i18n="sameAsOpen"></option>
+                <option value="fr" data-i18n="lang_fr"></option>
+                <option value="en" data-i18n="lang_en"></option>
+                <option value="es" data-i18n="lang_es"></option>
+                <option value="ht" data-i18n="lang_ht"></option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Graph style: one of LAYOUTS in public/js/graph.js; onPrefGraph() in app.js applies and saves it -->
+          <!-- min-w-0 (here and on Theme): a fieldset otherwise won't shrink below its content, so its row of cards
+               (.choice-row in src/input.css) would widen the dialog instead of scrolling -->
+          <fieldset class="min-w-0">
+            <legend class="text-base font-semibold text-zinc-800" data-i18n="graphStyle"></legend>
+            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="graphStyleHelp"></p>
+            <div class="choice-row mt-2">
+              <label class="choice-card">
+                <input type="radio" name="graph-layout" value="network" class="sr-only">
+                <svg viewBox="0 0 160 80" class="mb-1 max-h-32 w-full rounded-sm bg-zinc-50" aria-hidden="true">
+                  <g class="stroke-zinc-300" stroke-width="1">
+                    <path d="M80 40 52 22M80 40l30-20M80 40 50 60M80 40l32 20"/>
+                    <path d="M52 22 34 14M52 22l-6-14M52 22 32 28M110 20l20-8M110 20l8-14M110 20l24 6M50 60l-20-4M50 60l-8 14M50 60l10 14M112 60l20-6M112 60l14 12M112 60l-2 14"/>
+                  </g>
+                  <circle cx="80" cy="40" r="8" class="fill-cerise-200" fill-opacity=".6"/>
+                  <circle cx="80" cy="40" r="5" class="fill-brand"/>
+                  <g class="fill-who"><circle cx="52" cy="22" r="4"/><circle cx="34" cy="14" r="2.5"/><circle cx="46" cy="8" r="2.5"/><circle cx="32" cy="28" r="2.5"/></g>
+                  <g class="fill-what"><circle cx="110" cy="20" r="4"/><circle cx="130" cy="12" r="2.5"/><circle cx="118" cy="6" r="2.5"/><circle cx="134" cy="26" r="2.5"/></g>
+                  <g class="fill-how"><circle cx="50" cy="60" r="4"/><circle cx="30" cy="56" r="2.5"/><circle cx="42" cy="74" r="2.5"/><circle cx="60" cy="74" r="2.5"/></g>
+                  <g class="fill-why"><circle cx="112" cy="60" r="4"/><circle cx="132" cy="54" r="2.5"/><circle cx="126" cy="72" r="2.5"/><circle cx="110" cy="74" r="2.5"/></g>
+                </svg>
+                <span class="font-medium text-zinc-800" data-i18n="graph_network"></span>
+                <span class="text-sm text-zinc-500" data-i18n="graph_networkHelp"></span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="graph-layout" value="org" class="sr-only">
+                <svg viewBox="0 0 160 80" class="mb-1 max-h-32 w-full rounded-sm bg-zinc-50" aria-hidden="true">
+                  <g fill="none" class="stroke-zinc-300" stroke-width="1">
+                    <path d="M80 15v7M26 30v-5a3 3 0 0 1 3-3h102a3 3 0 0 1 3 3v5M62 22v8M98 22v8"/>
+                    <path d="M26 39v26a3 3 0 0 0 3 3h2M26 47a3 3 0 0 0 3 3h2M26 56a3 3 0 0 0 3 3h2M62 39v17a3 3 0 0 0 3 3h2M62 47a3 3 0 0 0 3 3h2M98 39v26a3 3 0 0 0 3 3h2M98 47a3 3 0 0 0 3 3h2M98 56a3 3 0 0 0 3 3h2M134 39v8a3 3 0 0 0 3 3h2"/>
+                  </g>
+                  <circle cx="80" cy="11" r="6.5" class="fill-cerise-200" fill-opacity=".6"/>
+                  <circle cx="80" cy="11" r="4" class="fill-brand"/>
+                  <g stroke-width="1">
+                    <rect x="14" y="30" width="24" height="9" rx="2" class="fill-who stroke-who" fill-opacity=".14"/>
+                    <rect x="50" y="30" width="24" height="9" rx="2" class="fill-what stroke-what" fill-opacity=".14"/>
+                    <rect x="86" y="30" width="24" height="9" rx="2" class="fill-how stroke-how" fill-opacity=".14"/>
+                    <rect x="122" y="30" width="24" height="9" rx="2" class="fill-why stroke-why" fill-opacity=".14"/>
+                  </g>
+                  <g class="fill-surface" stroke-width=".75" stroke-opacity=".6">
+                    <g class="stroke-who"><rect x="31" y="46.5" width="20" height="7" rx="1.5"/><rect x="31" y="55.5" width="16" height="7" rx="1.5"/><rect x="31" y="64.5" width="18" height="7" rx="1.5"/></g>
+                    <g class="stroke-what"><rect x="67" y="46.5" width="18" height="7" rx="1.5"/><rect x="67" y="55.5" width="21" height="7" rx="1.5"/></g>
+                    <g class="stroke-how"><rect x="103" y="46.5" width="17" height="7" rx="1.5"/><rect x="103" y="55.5" width="20" height="7" rx="1.5"/><rect x="103" y="64.5" width="15" height="7" rx="1.5"/></g>
+                    <g class="stroke-why"><rect x="139" y="46.5" width="18" height="7" rx="1.5"/></g>
+                  </g>
+                </svg>
+                <span class="font-medium text-zinc-800" data-i18n="graph_org"></span>
+                <span class="text-sm text-zinc-500" data-i18n="graph_orgHelp"></span>
+              </label>
+            </div>
+          </fieldset>
+
+          <!-- Theme: data-theme on <html> (public/js/theme.js sets it before the page is drawn, themes in src/input.css);
+               onPrefTheme() in app.js applies and saves it. Each preview is a miniature of the app in its own theme's
+               colors, so it looks the same whichever theme is on. -->
+          <%
+            const themePreviews = [
+              { theme: 'light', canvas: '#fafafa', surface: '#fff', line: '#e4e4e7', faint: '#d4d4d8', ink: '#52525b', open: '#fdf2f8', openInk: '#c11562', badge: '#fce7f4', halo: '#fcceea', brand: '#de247d', branches: ['#6366f1', '#10b981', '#f59e0b', '#0ea5e9'] },
+              { theme: 'dark', canvas: '#141416', surface: '#1c1c1f', line: '#323237', faint: '#44444b', ink: '#b9b9c2', open: '#351e2d', openInk: '#faa7d7', badge: '#462036', halo: '#802557', brand: '#de247d', branches: ['#6366f1', '#10b981', '#f59e0b', '#0ea5e9'] },
+              { theme: 'gold', canvas: '#070707', surface: '#0f0f0f', line: '#262626', faint: '#383838', ink: '#b8b8b8', open: '#272114', openInk: '#efd18c', badge: '#372d18', halo: '#6e5725', brand: '#d6a53c', branches: ['#f2f2f2', '#ecd08a', '#d6a53c', '#9f7628'] },
+            ];
+            // The graph beside the panel: four branches around the root (who, what, how, why), two words on each
+            const previewBranches = [
+              { at: [108, 26], leaves: [[97, 20], [104, 14]] },
+              { at: [138, 26], leaves: [[149, 20], [142, 14]] },
+              { at: [138, 54], leaves: [[149, 60], [142, 66]] },
+              { at: [108, 54], leaves: [[97, 60], [104, 66]] },
+            ];
+          %>
+          <fieldset class="min-w-0">
+            <legend class="text-base font-semibold text-zinc-800" data-i18n="theme"></legend>
+            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="themeHelp"></p>
+            <div class="choice-row mt-2">
+              <% themePreviews.forEach((p) => { %>
+              <label class="choice-card">
+                <input type="radio" name="theme" value="<%= p.theme %>" class="sr-only">
+                <svg viewBox="0 0 160 80" class="mb-1 max-h-32 w-full rounded-sm" aria-hidden="true">
+                  <rect width="160" height="80" fill="<%= p.canvas %>"/>
+                  <!-- Sidebar: the app's name, the open session and two more, the account -->
+                  <rect width="40" height="80" fill="<%= p.surface %>"/>
+                  <path d="M40.5 0v80" stroke="<%= p.line %>"/>
+                  <rect x="6" y="7" width="18" height="3" rx="1.5" fill="<%= p.ink %>"/>
+                  <rect x="4" y="15" width="32" height="8" rx="1.5" fill="<%= p.open %>"/>
+                  <rect x="7" y="18" width="18" height="2" rx="1" fill="<%= p.openInk %>"/>
+                  <rect x="7" y="28" width="22" height="2" rx="1" fill="<%= p.faint %>"/>
+                  <rect x="7" y="36" width="15" height="2" rx="1" fill="<%= p.faint %>"/>
+                  <circle cx="10" cy="72" r="3.5" fill="<%= p.badge %>"/>
+                  <rect x="16" y="71" width="14" height="2" rx="1" fill="<%= p.faint %>"/>
+                  <!-- Workflow panel: the title, the steps, two answers, the button -->
+                  <rect x="46.5" y="6.5" width="37" height="67" rx="2" fill="<%= p.surface %>" stroke="<%= p.line %>"/>
+                  <rect x="51" y="11" width="22" height="3" rx="1.5" fill="<%= p.ink %>"/>
+                  <path d="M57.5 22h5.5m7 0h5.5" stroke="<%= p.line %>"/>
+                  <circle cx="54" cy="22" r="2.5" fill="<%= p.brand %>"/>
+                  <circle cx="66.5" cy="22" r="2" fill="<%= p.surface %>" stroke="<%= p.faint %>"/>
+                  <circle cx="79" cy="22" r="2" fill="<%= p.surface %>" stroke="<%= p.faint %>"/>
+                  <rect x="51.5" y="29.5" width="28" height="11" rx="1.5" fill="none" stroke="<%= p.faint %>"/>
+                  <rect x="51.5" y="44.5" width="28" height="11" rx="1.5" fill="none" stroke="<%= p.faint %>"/>
+                  <rect x="51" y="62" width="29" height="7" rx="1.5" fill="<%= p.brand %>"/>
+                  <!-- Graph -->
+                  <g stroke="<%= p.faint %>" stroke-width=".75">
+                    <% previewBranches.forEach((b) => { %>
+                    <path d="M123 40L<%= b.at.join(' ') %><% b.leaves.forEach((l) => { %>M<%= b.at.join(' ') %>L<%= l.join(' ') %><% }) %>"/>
+                    <% }) %>
+                  </g>
+                  <% previewBranches.forEach((b, i) => { %>
+                  <g fill="<%= p.branches[i] %>">
+                    <circle cx="<%= b.at[0] %>" cy="<%= b.at[1] %>" r="3"/>
+                    <% b.leaves.forEach((l) => { %><circle cx="<%= l[0] %>" cy="<%= l[1] %>" r="1.75"/><% }) %>
+                  </g>
+                  <% }) %>
+                  <circle cx="123" cy="40" r="7" fill="<%= p.halo %>" fill-opacity=".6"/>
+                  <circle cx="123" cy="40" r="4.5" fill="<%= p.brand %>"/>
+                </svg>
+                <span class="font-medium text-zinc-800" data-i18n="theme_<%= p.theme %>"></span>
+                <span class="text-sm text-zinc-500" data-i18n="theme_<%= p.theme %>Help"></span>
+              </label>
+              <% }) %>
+            </div>
+          </fieldset>
+        </section>
+
+        <!-- Usage: this window's AI counts; filled by renderSettingsUsage() -->
+        <section id="settings-usage" data-settings-panel="usage" role="tabpanel" aria-labelledby="settings-tab-usage" hidden></section>
+
+        <!-- Billing: the plan with its price and dates, and what it includes; filled by renderSettingsBilling() -->
+        <section id="settings-billing" data-settings-panel="billing" role="tabpanel" aria-labelledby="settings-tab-billing" hidden class="space-y-6"></section>
+
+        <section id="settings-account" data-settings-panel="account" role="tabpanel" aria-labelledby="settings-tab-account" hidden class="space-y-6">
+          <% if (user) { %>
+          <!-- Each change opens its form in place of its button (openAccountForm() in app.js), one at a time. novalidate on
+               every form: app.js checks the fields and says what's wrong under them. -->
+          <!-- Profile: the name and email address as they are now, and an email change waiting for its link (renderProfile()) -->
+          <div id="profile" data-name="<%= user.name %>" data-email="<%= user.email %>" data-pending-email="<%= locals.pendingEmail || '' %>">
+            <h3 class="text-base font-semibold text-zinc-800" data-i18n="profile"></h3>
+            <div class="mt-3 flex items-center gap-3">
+              <span id="profile-initial" class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-cerise-100 text-lg font-semibold text-cerise-700" aria-hidden="true"><%= (user.name || user.email || '?').charAt(0).toUpperCase() %></span>
+              <div class="min-w-0">
+                <p id="profile-name" class="truncate text-base font-semibold text-zinc-900"><%= user.name || user.email %></p>
+                <p id="profile-email" class="truncate text-sm text-zinc-500" <%= user.name ? '' : 'hidden' %>><%= user.email %></p>
+              </div>
+            </div>
+            <div id="email-pending" hidden role="status" class="mt-4 flex max-w-md items-start gap-2 rounded-md bg-sky-50 px-3 py-2.5 text-sky-900">
+              <iconify-icon icon="boxicons:envelope" width="18" height="18" class="mt-px shrink-0" aria-hidden="true"></iconify-icon>
+              <div class="min-w-0 flex-1">
+                <p id="email-pending-text" class="text-sm"></p>
+                <button type="button" id="email-cancel" class="mt-1.5 inline-flex items-center gap-1.5 text-sm font-medium underline underline-offset-2 hover:text-sky-950"></button>
+              </div>
+            </div>
+            <div id="profile-actions" class="mt-4 flex flex-wrap gap-2">
+              <button type="button" id="name-start" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
+              <button type="button" id="email-start" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
+            </div>
+
+            <form id="name-form" hidden novalidate class="mt-4 max-w-md rounded-md border border-zinc-200 p-4">
+              <label for="name-input" class="label" data-i18n="nameLabel"></label>
+              <input id="name-input" name="name" type="text" autocomplete="name" maxlength="80" aria-describedby="name-error" class="field mt-1">
+              <p id="name-error" hidden role="alert" class="mt-3 rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
+              <div class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" data-account-cancel class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+                <button type="submit" id="name-save" class="btn-primary"></button>
+              </div>
+            </form>
+
+            <form id="email-form" hidden novalidate class="mt-4 max-w-md space-y-3 rounded-md border border-zinc-200 p-4">
+              <p class="text-sm text-zinc-500" data-i18n="newEmailHelp"></p>
+              <input type="email" name="username" autocomplete="username" value="<%= user.email %>" hidden readonly>
+              <div>
+                <label for="email-input" class="label" data-i18n="newEmailLabel"></label>
+                <input id="email-input" name="email" type="email" autocomplete="email" maxlength="254" aria-describedby="email-error" class="field mt-1">
+              </div>
+              <div>
+                <label for="email-password" class="label" data-i18n="currentPassword"></label>
+                <input id="email-password" name="password" type="password" autocomplete="current-password" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" aria-describedby="email-error" class="field mt-1">
+              </div>
+              <p id="email-error" hidden role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
+              <div class="!mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" data-account-cancel class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+                <button type="submit" id="email-save" class="btn-primary"></button>
+              </div>
+            </form>
+          </div>
+
+          <div class="border-t border-zinc-100 pt-5">
+            <h3 class="text-base font-semibold text-zinc-800" data-i18n="password"></h3>
+            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="passwordHelp"></p>
+            <button type="button" id="password-start" class="btn-ghost mt-3 border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
+            <!-- Save new password stays disabled until the new one meets every rule (PasswordStrength.watch, password.js) -->
+            <form id="password-form" hidden novalidate class="mt-3 max-w-md space-y-3 rounded-md border border-zinc-200 p-4">
+              <input type="email" name="username" autocomplete="username" value="<%= user.email %>" hidden readonly>
+              <div>
+                <label for="current-password" class="label" data-i18n="currentPassword"></label>
+                <input id="current-password" name="password" type="password" autocomplete="current-password" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" aria-describedby="password-error" class="field mt-1">
+              </div>
+              <div>
+                <label for="new-password" class="label" data-i18n="newPassword"></label>
+                <input id="new-password" name="new-password" type="password" autocomplete="new-password" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" aria-describedby="new-password-hint password-error" class="field mt-1">
+                <%- include('auth/_password-checks', { hintId: 'new-password-hint' }) %>
+              </div>
+              <p id="password-error" hidden role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
+              <div class="!mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" data-account-cancel class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+                <button type="submit" id="password-save" class="btn-primary"></button>
+              </div>
+            </form>
+          </div>
+
+          <div class="border-t border-zinc-100 pt-5">
+            <h3 class="text-base font-semibold text-zinc-800" data-i18n="yourData"></h3>
+            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="exportHelp"></p>
+            <button type="button" id="export-data" class="btn-ghost mt-3 border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
+          </div>
+
+          <div class="border-t border-zinc-100 pt-5">
+            <h3 class="text-base font-semibold text-zinc-800" data-i18n="deleteAccount"></h3>
+            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="deleteAccountHelp"></p>
+            <button type="button" id="delete-start" class="btn-ghost mt-3 border border-red-200 px-3 py-2 font-medium text-red-600 hover:bg-red-50 hover:text-red-700"></button>
+            <form id="delete-form" hidden novalidate class="mt-3 max-w-md rounded-md border border-red-200 p-4">
+              <input type="email" name="username" autocomplete="username" value="<%= user.email %>" hidden readonly>
+              <label for="delete-password" class="label" data-i18n="deleteConfirmLabel"></label>
+              <input id="delete-password" name="password" type="password" autocomplete="current-password" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" aria-describedby="delete-error" class="field mt-1">
+              <p id="delete-error" hidden role="alert" class="mt-3 rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
+              <div class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" data-account-cancel class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+                <button type="submit" id="delete-confirm" class="btn-danger"></button>
+              </div>
+            </form>
+          </div>
+          <% } else { %>
+          <div class="rounded-md border border-zinc-200 p-4">
+            <h3 id="settings-guest-title" class="text-base font-semibold text-zinc-800"></h3>
+            <p id="settings-guest-body" class="mt-1 max-w-prose text-sm text-zinc-500"></p>
+            <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+              <a href="/app/signup" data-keep-place class="btn-primary" data-i18n="signUpFree"></a>
+              <a href="/app/login" data-keep-place class="btn-ghost justify-center border border-zinc-200 px-4 py-2.5 font-medium text-zinc-700" data-i18n="logIn"></a>
+            </div>
+          </div>
+          <% } %>
+        </section>
+      </div>
+    </div>
+  </div>
+  <% if (user) { %>
+  <!-- After the account is deleted: the only way on is a fresh page, as a guest -->
+  <div id="settings-deleted" hidden class="flex h-full flex-col items-center justify-center p-6 text-center">
+    <span class="inline-flex size-11 items-center justify-center rounded-full bg-emerald-50 text-emerald-600" aria-hidden="true">
+      <iconify-icon icon="boxicons:check" width="24" height="24"></iconify-icon>
+    </span>
+    <h2 class="mt-4 text-lg font-semibold text-zinc-900" data-i18n="accountDeletedTitle"></h2>
+    <p class="mt-1 max-w-sm text-base text-zinc-600" data-i18n="accountDeletedBody"></p>
+    <button type="button" id="settings-deleted-ok" class="btn-primary mt-5" data-i18n="continue"></button>
+  </div>
+  <% } %>
+</dialog>
+
 <!-- Toasts -->
 <div id="toasts" class="pointer-events-none fixed inset-x-3 bottom-[calc(var(--sheet-h,var(--sheet-peek))+0.75rem)] z-[60] flex flex-col items-center gap-2 lg:bottom-4 lg:left-auto lg:right-[4.5rem] lg:items-end" aria-live="assertive"></div>
 
 <script src="/vendor/cytoscape/cytoscape.min.js"></script>
+<script src="/js/password.js"></script>
 <script type="module" src="/js/app.js"></script>
 <%- include('../partials/foot') %>

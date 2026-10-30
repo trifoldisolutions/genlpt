@@ -1,12 +1,12 @@
 <%- include('../partials/head') %>
 <%
   // Every account page (routes/app.js render()): the form column shows views/app/auth/<screen>, beside the showcase.
-  // Showcase: one word per branch (who, what, how, why), read clockwise from top-left
+  // Showcase: one word per branch (who, what, how, why), read clockwise from top-left; colors per theme in src/input.css
   const branches = [
-    { name: 'Who', color: '#4f46e5', node: [128, 120], word: [78, 58], label: [116, 124, 'end'], above: true, leaves: [[48, 118], [150, 46]] },
-    { name: 'What', color: '#059669', node: [272, 118], word: [322, 56], label: [284, 122, 'start'], above: true, leaves: [[352, 122], [250, 44]] },
-    { name: 'How', color: '#d97706', node: [276, 252], word: [326, 318], label: [288, 256, 'start'], above: false, leaves: [[354, 250], [250, 332]] },
-    { name: 'Why', color: '#0284c7', node: [124, 254], word: [74, 322], label: [112, 258, 'end'], above: false, leaves: [[46, 258], [150, 334]] },
+    { name: 'Who', color: 'var(--sc-who)', node: [128, 120], word: [78, 58], label: [116, 124, 'end'], above: true, leaves: [[48, 118], [150, 46]] },
+    { name: 'What', color: 'var(--sc-what)', node: [272, 118], word: [322, 56], label: [284, 122, 'start'], above: true, leaves: [[352, 122], [250, 44]] },
+    { name: 'How', color: 'var(--sc-how)', node: [276, 252], word: [326, 318], label: [288, 256, 'start'], above: false, leaves: [[354, 250], [250, 332]] },
+    { name: 'Why', color: 'var(--sc-why)', node: [124, 254], word: [74, 322], label: [112, 258, 'end'], above: false, leaves: [[46, 258], [150, 334]] },
   ];
   const examples = [
     ['New', 'Entrepreneurs', 'Starting', 'Together'],
@@ -19,7 +19,7 @@
 <div class="flex min-h-dvh flex-col lg:flex-row">
 
   <!-- Form column -->
-  <div class="flex flex-1 flex-col bg-white px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-8 lg:w-[480px] lg:flex-none">
+  <div class="flex flex-1 flex-col bg-surface px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-8 lg:w-[480px] lg:flex-none">
     <a href="/app" class="self-start text-lg font-bold leading-tight tracking-tight"><%= appName %></a>
 
     <main class="mx-auto flex w-full max-w-sm flex-1 flex-col pb-10 pt-12 lg:justify-center lg:py-10">
@@ -30,23 +30,23 @@
   <!-- Showcase: a miniature of the app's graph spelling example acronyms (decorative) -->
   <aside id="showcase" class="play dot-grid relative flex flex-col items-center justify-center gap-6 overflow-hidden border-t border-zinc-200 px-4 py-10 lg:flex-1 lg:border-l lg:border-t-0 lg:py-0" data-examples="<%= JSON.stringify(examples) %>" aria-hidden="true">
     <svg viewBox="0 0 400 380" class="hidden w-full max-w-[520px] lg:block" fill="none">
-      <g stroke="#d4d4d8" stroke-width="1">
+      <g class="stroke-zinc-300" stroke-width="1">
         <% branches.forEach((b) => { %>
         <line x1="200" y1="186" x2="<%= b.node[0] %>" y2="<%= b.node[1] %>"/>
-        <% b.leaves.forEach(([x, y]) => { %><line x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= x %>" y2="<%= y %>" stroke="#e4e4e7"/><% }) %>
+        <% b.leaves.forEach(([x, y]) => { %><line x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= x %>" y2="<%= y %>" class="stroke-zinc-200"/><% }) %>
         <% }) %>
       </g>
       <% branches.forEach((b, i) => { %>
-      <line class="sc-edge" style="--i:<%= i %>" x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= b.word[0] %>" y2="<%= b.word[1] %>" stroke="<%= b.color %>" stroke-width="1.25"/>
-      <% b.leaves.forEach(([x, y]) => { %><circle cx="<%= x %>" cy="<%= y %>" r="4" fill="#fff" stroke="#d4d4d8" stroke-width="1.25"/><% }) %>
-      <circle cx="<%= b.node[0] %>" cy="<%= b.node[1] %>" r="8" fill="<%= b.color %>"/>
-      <text x="<%= b.label[0] %>" y="<%= b.label[1] %>" text-anchor="<%= b.label[2] %>" font-size="12" font-weight="600" fill="#3f3f46"><%= b.name %></text>
+      <line class="sc-edge" style="--i:<%= i %>" x1="<%= b.node[0] %>" y1="<%= b.node[1] %>" x2="<%= b.word[0] %>" y2="<%= b.word[1] %>" style="stroke:<%= b.color %>" stroke-width="1.25"/>
+      <% b.leaves.forEach(([x, y]) => { %><circle cx="<%= x %>" cy="<%= y %>" r="4" class="fill-surface stroke-zinc-300" stroke-width="1.25"/><% }) %>
+      <circle cx="<%= b.node[0] %>" cy="<%= b.node[1] %>" r="8" style="fill:<%= b.color %>"/>
+      <text x="<%= b.label[0] %>" y="<%= b.label[1] %>" text-anchor="<%= b.label[2] %>" font-size="12" font-weight="600" class="fill-zinc-700"><%= b.name %></text>
       <g class="sc-word" style="--i:<%= i %>">
-        <circle cx="<%= b.word[0] %>" cy="<%= b.word[1] %>" r="6" fill="<%= b.color %>"/>
-        <text data-word x="<%= b.word[0] %>" y="<%= b.word[1] + (b.above ? -13 : 22) %>" text-anchor="middle" font-size="15" fill="#52525b" class="sc-halo"><tspan font-weight="700" fill="<%= b.color %>"><%= first[i][0] %></tspan><tspan><%= first[i].slice(1) %></tspan></text>
+        <circle cx="<%= b.word[0] %>" cy="<%= b.word[1] %>" r="6" style="fill:<%= b.color %>"/>
+        <text data-word x="<%= b.word[0] %>" y="<%= b.word[1] + (b.above ? -13 : 22) %>" text-anchor="middle" font-size="15" class="sc-halo fill-zinc-600"><tspan font-weight="700" style="fill:<%= b.color %>"><%= first[i][0] %></tspan><tspan><%= first[i].slice(1) %></tspan></text>
       </g>
       <% }) %>
-      <circle cx="200" cy="186" r="13" fill="#de247d" stroke="#fcceea" stroke-opacity=".6" stroke-width="7"/>
+      <circle cx="200" cy="186" r="13" class="fill-brand stroke-cerise-200" stroke-opacity=".6" stroke-width="7"/>
     </svg>
 
     <div class="text-center">
@@ -58,5 +58,6 @@
     </div>
   </aside>
 </div>
+<script src="/js/password.js" defer></script>
 <script src="/js/auth.js" defer></script>
 <%- include('../partials/foot') %>

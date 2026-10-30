@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { candidateFromName, splitAcronym, chunkSource } = require('../services/acronym/compose');
 const { conceptKey, cleanWordList } = require('../services/acronym/normalize');
 const { candidateFromIds } = require('../services/acronym/engine');
+const { composeNames } = require('../services/llm/prompts');
 
 const w = (id, branch, text) => ({ _id: id, branch, text });
 const idMap = new Map([
@@ -67,4 +68,21 @@ test('the phrase rules still apply to composed names', () => {
   assert.equal(pick('App', ['w1']), null); // one word is not an acronym
   assert.equal(pick('App and Tool for Keywords', ['w1', 'w5', 'w3']), null); // two [Who] words with maxPerBranch 1
   assert.equal(pick('Keywords for the App', ['w3', 'w9']), null); // unknown id
+});
+
+test('the compose prompt asks for the words added since the last run, unless every word is new', () => {
+  const base = { language: 'en', answers: {}, minLength: 3, maxLength: 6 };
+  const idWords = [
+    { id: 'w1', branch: 'who', text: 'App' },
+    { id: 'w2', branch: 'what', text: 'Acronyms', fresh: true },
+    { id: 'w3', branch: 'how', text: 'Keywords', fresh: true },
+  ];
+  const prompt = (words, language = 'en') => composeNames({ ...base, language, idWords: words }).user;
+  assert.match(prompt(idWords), /Words w2, w3 were just added/);
+  assert.match(prompt(idWords, 'fr'), /Les mots w2, w3 viennent/);
+  assert.match(prompt(idWords, 'es'), /Las palabras w2, w3 se acaban/);
+  assert.match(prompt(idWords, 'ht'), /Words w2, w3 were just added/);
+  assert.match(prompt(idWords, 'ht'), /Haitian Creole phrase/);
+  assert.doesNotMatch(prompt(idWords.map((w) => ({ ...w, fresh: false }))), /just added/); // no run yet, or nothing new
+  assert.doesNotMatch(prompt(idWords.map((w) => ({ ...w, fresh: true }))), /just added/); // all new: every name uses them anyway
 });

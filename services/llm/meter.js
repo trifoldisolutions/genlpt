@@ -5,8 +5,11 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 
 const store = new AsyncLocalStorage();
 
-// Runs fn with `meter` ({ calls: [] }) as the current meter, for everything fn starts (awaited or not)
+// Runs fn with `meter` ({ calls: [], plan }) as the current meter, for everything fn starts (awaited or not).
+// plan: the plan the request is on, so its calls go through that plan's key.
 const run = (meter, fn) => store.run(meter, fn);
+
+const current = () => store.getStore();
 
 // One provider call: { step, model, retry, ok, error, ms, inputTokens, outputTokens, reasoningTokens,
 // cachedTokens, cost, rateLimitRetries, waitMs }. Outside a meter (scripts, tests) nothing is kept.
@@ -26,4 +29,4 @@ function totals(calls) {
   };
 }
 
-module.exports = { run, record, totals };
+module.exports = { run, current, record, totals };

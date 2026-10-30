@@ -47,7 +47,192 @@
   --color-cerise-800: #9f1551;
   --color-cerise-900: #851646;
   --color-cerise-950: #510626;
+
+  /* Roles each theme sets on its own (see Themes below): panels and cards, the backdrop behind dialogs, and the
+     solid fills with the text that goes on them */
+  --color-surface: #fff;
+  --color-scrim: oklch(21% 0.006 285.885); /* zinc-900 */
+  --color-brand: #de247d; /* cerise-600 */
+  --color-brand-hover: #c11562; /* cerise-700 */
+  --color-on-brand: #fff;
+  --color-danger: oklch(57.7% 0.245 27.325); /* red-600 */
+  --color-danger-hover: oklch(50.5% 0.213 27.518); /* red-700 */
+  --color-on-danger: #fff;
 }
+
+/* The four branches' colors (graph dots and boxes, word chips, acronym letters, legend), with the text on them.
+   Static: app.js uses them in inline styles, which Tailwind doesn't see. graph.js has them in hex (INKS). */
+@theme static {
+  --color-who: #6366f1;
+  --color-what: #10b981;
+  --color-how: #f59e0b;
+  --color-why: #0ea5e9;
+  --color-on-branch: #fff;
+}
+
+/* ---- Themes ----
+   data-theme on <html>, set by public/js/theme.js before the page is drawn. Light is the palette above. The dark
+   themes (dark, gold) redefine the palette's variables instead of adding dark: classes, so markup is written once,
+   for light:
+   - zinc is flipped (text-zinc-900 turns near-white, a bg-zinc-100 hover dark grey); bg-surface replaces bg-white
+   - each hue's light tints (50–300) become dark tints of it, mixed over the surface, and its inks (600–950) take
+     the light ones' values, so bg-red-50 text-red-800 stays a readable alert; 400 swaps with 600, 500 stays
+   - cerise is the brand's scale: in gold, it holds golds
+   - solid fills: bg-brand with text-on-brand, bg-danger with text-on-danger, a branch color with on-branch; not
+     cerise-600 / red-600, which turn into light inks
+   The graph's colors are in public/js/graph.js (INKS), in hex: keep them in step with these. */
+
+/* What the dark themes share: the hues' flips, mixed over each one's own surface (and, for cerise, brand scale) */
+:root[data-theme="dark"],
+:root[data-theme="gold"] {
+  color-scheme: dark;
+  --color-scrim: #000;
+
+  --color-cerise-50: color-mix(in oklab, var(--color-cerise-500) 12%, var(--color-surface));
+  --color-cerise-100: color-mix(in oklab, var(--color-cerise-500) 20%, var(--color-surface));
+  --color-cerise-200: color-mix(in oklab, var(--color-cerise-500) 32%, var(--color-surface));
+  --color-cerise-300: color-mix(in oklab, var(--color-cerise-500) 48%, var(--color-surface));
+
+  --color-red-50: color-mix(in oklab, var(--color-red-500) 12%, var(--color-surface));
+  --color-red-100: color-mix(in oklab, var(--color-red-500) 20%, var(--color-surface));
+  --color-red-200: color-mix(in oklab, var(--color-red-500) 32%, var(--color-surface));
+  --color-red-300: color-mix(in oklab, var(--color-red-500) 48%, var(--color-surface));
+  --color-red-400: oklch(57.7% 0.245 27.325);
+  --color-red-600: oklch(70.4% 0.191 22.216);
+  --color-red-700: oklch(80.8% 0.114 19.571);
+  --color-red-800: oklch(88.5% 0.062 18.334);
+  --color-red-900: oklch(93.6% 0.032 17.717);
+  --color-red-950: oklch(97.1% 0.013 17.38);
+
+  --color-amber-50: color-mix(in oklab, var(--color-amber-500) 12%, var(--color-surface));
+  --color-amber-100: color-mix(in oklab, var(--color-amber-500) 20%, var(--color-surface));
+  --color-amber-200: color-mix(in oklab, var(--color-amber-500) 32%, var(--color-surface));
+  --color-amber-300: color-mix(in oklab, var(--color-amber-500) 48%, var(--color-surface));
+  --color-amber-400: oklch(66.6% 0.179 58.318);
+  --color-amber-600: oklch(82.8% 0.189 84.429);
+  --color-amber-700: oklch(87.9% 0.169 91.605);
+  --color-amber-800: oklch(92.4% 0.12 95.746);
+  --color-amber-900: oklch(96.2% 0.059 95.617);
+  --color-amber-950: oklch(98.7% 0.022 95.277);
+
+  --color-sky-50: color-mix(in oklab, var(--color-sky-500) 12%, var(--color-surface));
+  --color-sky-100: color-mix(in oklab, var(--color-sky-500) 20%, var(--color-surface));
+  --color-sky-200: color-mix(in oklab, var(--color-sky-500) 32%, var(--color-surface));
+  --color-sky-300: color-mix(in oklab, var(--color-sky-500) 48%, var(--color-surface));
+  --color-sky-400: oklch(58.8% 0.158 241.966);
+  --color-sky-600: oklch(74.6% 0.16 232.661);
+  --color-sky-700: oklch(82.8% 0.111 230.318);
+  --color-sky-800: oklch(90.1% 0.058 230.902);
+  --color-sky-900: oklch(95.1% 0.026 236.824);
+  --color-sky-950: oklch(97.7% 0.013 236.62);
+
+  --color-emerald-50: color-mix(in oklab, var(--color-emerald-500) 12%, var(--color-surface));
+  --color-emerald-100: color-mix(in oklab, var(--color-emerald-500) 20%, var(--color-surface));
+  --color-emerald-200: color-mix(in oklab, var(--color-emerald-500) 32%, var(--color-surface));
+  --color-emerald-300: color-mix(in oklab, var(--color-emerald-500) 48%, var(--color-surface));
+  --color-emerald-400: oklch(59.6% 0.145 163.225);
+  --color-emerald-600: oklch(76.5% 0.177 163.223);
+  --color-emerald-700: oklch(84.5% 0.143 164.978);
+  --color-emerald-800: oklch(90.5% 0.093 164.15);
+  --color-emerald-900: oklch(95% 0.052 163.051);
+  --color-emerald-950: oklch(97.9% 0.021 166.113);
+}
+
+/* Dark: cool greys, the cerise brand */
+:root[data-theme="dark"] {
+  --color-surface: #1c1c1f;
+
+  --color-zinc-50: #141416;
+  --color-zinc-100: #27272b;
+  --color-zinc-200: #323237;
+  --color-zinc-300: #44444b;
+  --color-zinc-400: #6e6e78;
+  --color-zinc-500: #a0a0ab;
+  --color-zinc-600: #b9b9c2;
+  --color-zinc-700: #d1d1d7;
+  --color-zinc-800: #e2e2e6;
+  --color-zinc-900: #f1f1f3;
+  --color-zinc-950: #fafafa;
+
+  --color-cerise-400: #de247d;
+  --color-cerise-600: #f670ba;
+  --color-cerise-700: #faa7d7;
+  --color-cerise-800: #fcceea;
+  --color-cerise-900: #fce7f4;
+  --color-cerise-950: #fdf2f8;
+}
+
+/* Gold: three colors only, near-black, white and gold, so every other hue is drawn in one of them: errors and
+   notices (red, sky) in white, success and warnings (emerald, amber) in gold, the branches from white to deep gold.
+   Greys are neutral, with no warm cast. Gold is light, so the text on a gold or white fill is near-black. */
+:root[data-theme="gold"] {
+  --color-surface: #0f0f0f;
+  --color-brand: #d6a53c;
+  --color-brand-hover: #e3b756;
+  --color-on-brand: #0a0a0a;
+  --color-danger: #f5f5f5;
+  --color-danger-hover: #fff;
+  --color-on-danger: #0a0a0a;
+
+  --color-zinc-50: #070707;
+  --color-zinc-100: #1b1b1b;
+  --color-zinc-200: #262626;
+  --color-zinc-300: #383838;
+  --color-zinc-400: #6b6b6b;
+  --color-zinc-500: #9e9e9e;
+  --color-zinc-600: #b8b8b8;
+  --color-zinc-700: #d2d2d2;
+  --color-zinc-800: #e6e6e6;
+  --color-zinc-900: #f5f5f5;
+  --color-zinc-950: #fff;
+
+  --color-cerise-400: #b58a2e;
+  --color-cerise-500: #d6a53c;
+  --color-cerise-600: #e6c065;
+  --color-cerise-700: #efd18c;
+  --color-cerise-800: #f5e1b0;
+  --color-cerise-900: #faeed2;
+  --color-cerise-950: #fdf7e8;
+
+  --color-red-400: var(--color-zinc-600);
+  --color-red-500: var(--color-zinc-800);
+  --color-red-600: var(--color-zinc-900);
+  --color-red-700: var(--color-zinc-950);
+  --color-red-800: var(--color-zinc-950);
+  --color-red-900: var(--color-zinc-950);
+  --color-red-950: var(--color-zinc-950);
+
+  --color-sky-400: var(--color-zinc-600);
+  --color-sky-500: var(--color-zinc-800);
+  --color-sky-600: var(--color-zinc-900);
+  --color-sky-700: var(--color-zinc-950);
+  --color-sky-800: var(--color-zinc-950);
+  --color-sky-900: var(--color-zinc-950);
+  --color-sky-950: var(--color-zinc-950);
+
+  --color-amber-400: var(--color-cerise-400);
+  --color-amber-500: var(--color-cerise-500);
+  --color-amber-600: var(--color-cerise-600);
+  --color-amber-700: var(--color-cerise-700);
+  --color-amber-800: var(--color-cerise-800);
+  --color-amber-900: var(--color-cerise-900);
+  --color-amber-950: var(--color-cerise-950);
+
+  --color-emerald-400: var(--color-cerise-400);
+  --color-emerald-500: var(--color-cerise-500);
+  --color-emerald-600: var(--color-cerise-600);
+  --color-emerald-700: var(--color-cerise-700);
+  --color-emerald-800: var(--color-cerise-800);
+  --color-emerald-900: var(--color-cerise-900);
+  --color-emerald-950: var(--color-cerise-950);
+
+  --color-who: #f2f2f2;
+  --color-what: #ecd08a;
+  --color-how: #d6a53c;
+  --color-why: #9f7628;
+  --color-on-branch: #0a0a0a;
+}
+:root[data-theme="gold"] ::selection { background-color: color-mix(in oklab, var(--color-brand) 40%, transparent); color: #fff; }
 
 @layer base {
   button:not(:disabled), [role="button"]:not([aria-disabled="true"]), summary { cursor: pointer; }
@@ -66,29 +251,71 @@
   @media (pointer: coarse) { .icon-btn { @apply size-11; } }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-md bg-cerise-600 px-4 py-2.5 text-base font-semibold text-white;
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-brand px-4 py-2.5 text-base font-semibold text-on-brand;
   }
-  .btn-primary:not(:disabled):hover { @apply bg-cerise-700; }
+  .btn-primary:not(:disabled):hover { @apply bg-brand-hover; }
 
   .btn-ghost {
     @apply inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-base text-zinc-600;
   }
   .btn-ghost:not(:disabled):hover { @apply bg-zinc-100 text-zinc-900; }
 
+  /* The final step of something that can't be undone (Delete my account) */
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-danger px-4 py-2.5 text-base font-semibold text-on-danger;
+  }
+  .btn-danger:not(:disabled):hover { @apply bg-danger-hover; }
+
+  /* Settings dialog tabs: a row on phones, a column beside the content from sm up */
+  .settings-tab {
+    @apply flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-base font-medium whitespace-nowrap text-zinc-600;
+  }
+  .settings-tab:hover { @apply bg-zinc-50 text-zinc-900; }
+  .settings-tab[aria-selected="true"] { @apply bg-zinc-100 text-zinc-900; }
+
+  /* A radio choice drawn as a card (Settings → General), in a .choice-row: the radio itself is sr-only inside the
+     label, which is relative so the radio sits in it, and focusing it scrolls the row to this card */
+  .choice-card {
+    @apply relative flex w-[15.25rem] shrink-0 cursor-pointer snap-start flex-col gap-0.5 rounded-md border border-zinc-200 p-3 text-base;
+  }
+  .choice-card:hover { @apply border-zinc-300; }
+  .choice-card:has(:checked) { @apply border-cerise-500 bg-cerise-50/40 ring-1 ring-cerise-500; }
+  .choice-card:has(:focus-visible) { outline: 2px solid var(--color-cerise-500); outline-offset: 2px; }
+  /* The cards in one row that scrolls sideways once they don't fit, each as wide as its one-line description needs.
+     The padding (cancelled by the margin) keeps the checked ring and the focus outline from being clipped. No
+     scrollbar: it sat on the cards' bottom edge; the card cut off at the edge shows there's more, and picking it
+     scrolls it in. */
+  .choice-row { @apply -m-1 flex snap-x scroll-px-1 gap-3 overflow-x-auto overscroll-x-contain p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden; }
+
   .field {
-    @apply w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400;
+    @apply w-full rounded-md border border-zinc-300 bg-surface px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400;
   }
   .field:focus { @apply border-cerise-500 outline-none ring-2 ring-cerise-100; }
   .field:disabled { @apply cursor-not-allowed bg-zinc-100 text-zinc-500; }
 
-  .label { @apply block text-sm font-medium text-zinc-600; }
+  .label { @apply block text-base font-medium text-zinc-700; }
 
-  /* Quiet compact select: session language + model above the title */
+  /* Custom dropdown (public/js/select.js): a combobox (.field, or .meta-select when compact) over a listbox that
+     opens as a popover in the top layer, placed by the script (fixed left/top). The popover's own UA styles
+     (centered, inset 0) are undone here. data-active: the option the keys or pointer are on; aria-selected: the
+     chosen one, with a check; aria-disabled: listed but not choosable (a model guests can't use). */
+  .select-trigger { @apply flex cursor-pointer items-center justify-between gap-2 text-left; }
+  .field.select-trigger[aria-disabled="true"] { @apply cursor-not-allowed bg-zinc-100 text-zinc-500; }
+  .select-list { @apply fixed inset-auto z-50 m-0 max-h-60 w-max overflow-y-auto rounded-md border border-zinc-200 bg-surface p-1 text-zinc-700 shadow-lg; max-width: calc(100vw - 16px); }
+  .select-option { @apply flex cursor-pointer items-center justify-between gap-2 rounded-sm px-2.5 py-2 text-base text-zinc-700; }
+  .select-list[data-compact="true"] .select-option { @apply text-sm; }
+  @media (pointer: coarse) { .select-option { @apply py-3; } }
+  .select-option[data-active="true"] { @apply bg-zinc-100 text-zinc-900; }
+  .select-option[aria-selected="true"] { @apply font-medium text-zinc-900; }
+  .select-option[aria-disabled="true"] { @apply cursor-not-allowed text-zinc-400; }
+  .select-option iconify-icon { @apply text-cerise-600; visibility: hidden; }
+  .select-option[aria-selected="true"] iconify-icon { visibility: visible; }
+
+  /* Quiet compact dropdown trigger: session language + model above the title */
   .meta-select { @apply rounded-md border border-zinc-200 bg-transparent px-2 py-1 text-sm text-zinc-700; }
-  .meta-select:not(:disabled) { @apply cursor-pointer; }
-  .meta-select:not(:disabled):hover { @apply border-zinc-300 text-zinc-900; }
+  .meta-select:not([aria-disabled="true"]):hover { @apply border-zinc-300 text-zinc-900; }
   .meta-select:focus { @apply border-cerise-500 outline-none ring-2 ring-cerise-100; }
-  .meta-select:disabled { @apply cursor-not-allowed text-zinc-400; }
+  .meta-select[aria-disabled="true"] { @apply cursor-not-allowed text-zinc-400; }
 
   /* Workflow stepper (#steps): a dot over a label, steps of one fixed width (the widest label, so the dots don't move
      when the current one turns bold), and a flex-1 line between them filling the rest of the row.
@@ -100,7 +327,7 @@
   .step-line { @apply -mx-4 mt-[calc(1.125rem-1px)] h-0.5 min-w-4 flex-1 rounded-full bg-zinc-200; }
   .step[data-done="true"] + .step-line { background: var(--color-cerise-500); }
   .step-dot {
-    @apply flex size-7 items-center justify-center rounded-full border-2 border-zinc-300 bg-white text-sm font-semibold tabular-nums text-zinc-500 transition-colors;
+    @apply flex size-7 items-center justify-center rounded-full border-2 border-zinc-300 bg-surface text-sm font-semibold tabular-nums text-zinc-500 transition-colors;
   }
   .step:hover .step-dot { @apply border-zinc-400 text-zinc-700; }
   .step-dot iconify-icon { display: none; }
@@ -108,7 +335,7 @@
   .step[data-done="true"]:not([aria-selected="true"]) .step-dot iconify-icon { display: inline-block; }
   .step[data-done="true"] .step-dot { @apply border-cerise-500 bg-cerise-50 text-cerise-600; }
   .step[aria-selected="true"] { @apply font-semibold text-zinc-900; }
-  .step[aria-selected="true"] .step-dot { @apply border-cerise-600 bg-cerise-600 text-white; }
+  .step[aria-selected="true"] .step-dot { @apply border-brand bg-brand text-on-brand; }
 }
 
 /* ---- App shell state (unlayered so it wins over utilities) ---- */
@@ -122,7 +349,8 @@
 
 @media (width >= 64rem) {
   #app[data-sidebar="collapsed"] #sidebar { display: none; }
-  #app[data-sidebar="expanded"] #drawer-open { display: none; }
+  #app[data-sidebar="expanded"] #drawer-open,
+  #app[data-sidebar="expanded"] #elsewhere-sessions { display: none; }
   #app[data-sidebar="collapsed"] #workflow { left: 4.5rem; }
   #workflow[data-min="true"],
   #workflow[data-empty="true"] { bottom: auto; }
@@ -144,6 +372,11 @@
   background-image: radial-gradient(var(--color-zinc-200) 1px, transparent 1px);
   background-size: 24px 24px;
 }
+
+/* Showcase branch colors: a shade darker than the graph's on the light page, so the letters keep their contrast;
+   the graph's own on the dark themes */
+#showcase { --sc-who: #4f46e5; --sc-what: #059669; --sc-how: #d97706; --sc-why: #0284c7; }
+:root:is([data-theme="dark"], [data-theme="gold"]) #showcase { --sc-who: var(--color-who); --sc-what: var(--color-what); --sc-how: var(--color-how); --sc-why: var(--color-why); }
 
 /* Word labels get a canvas-colored outline, like Cytoscape's text-outline */
 .sc-halo { paint-order: stroke; stroke: var(--color-zinc-50); stroke-width: 4px; stroke-linejoin: round; }

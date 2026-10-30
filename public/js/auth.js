@@ -1,16 +1,48 @@
-// Account pages: password reveal, busy submit buttons, "Forgot password?" link, and the acronym showcase.
+// Account pages: password reveal, a new password's live checks, signup's bot check, busy submit buttons,
+// "Forgot password?" link, and the acronym showcase.
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
+// The eye button shows the password, then hides it again; its label says what the next click does
 document.querySelectorAll('[data-reveal]').forEach((btn) => {
   const input = document.getElementById(btn.getAttribute('aria-controls'));
   btn.addEventListener('click', () => {
     const reveal = input.type === 'password';
+    const label = reveal ? 'Hide password' : 'Show password';
     input.type = reveal ? 'text' : 'password';
-    btn.setAttribute('aria-pressed', String(reveal));
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
     btn.querySelector('iconify-icon').setAttribute('icon', reveal ? 'boxicons:eye-slash' : 'boxicons:eye');
   });
 });
+
+// Signup and reset (auth/_password-checks.ejs): the new password's live checks (PasswordStrength.watch,
+// public/js/password.js). They disable the submit button until every rule is met; from the script, not the markup,
+// so without it the button still works, and the server checks the rules.
+const checks = $('[data-password-checks]');
+if (checks && typeof PasswordStrength !== 'undefined') PasswordStrength.watch(checks, $('#password'));
+
+// Signup's bot check (Cloudflare Turnstile) usually finishes unseen while the form is filled in. Sent before
+// then, the form says so and waits, without going busy, then sends itself once the check is done.
+// If its script never loaded (a blocker extension), the form goes anyway and the server says what happened.
+// Set up before data-busy below, so a held submit stops here.
+const turnstile = $('[data-turnstile]');
+if (turnstile) {
+  const form = turnstile.closest('form');
+  const note = $('[data-turnstile-note]', form);
+  form.addEventListener('submit', (e) => {
+    if (form.elements['cf-turnstile-response']?.value || !window.turnstile) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    note.hidden = false;
+  });
+  // The widget's data-callback: the check passed
+  window.turnstileDone = () => {
+    if (note.hidden) return;
+    note.hidden = true;
+    form.requestSubmit();
+  };
+}
 
 // Forms with data-busy post normally; meanwhile the submit button shows a spinner and can't be pressed twice.
 // The spinner takes the button's icon's place, or goes before its label when it has none.

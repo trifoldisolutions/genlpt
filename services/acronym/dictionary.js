@@ -6,7 +6,12 @@ const { normalizeLetters } = require('./normalize');
 const SOURCES = {
   fr: 'an-array-of-french-words',
   en: 'an-array-of-english-words',
+  es: 'an-array-of-spanish-words', // written without accents ("accion"), which normalizeLetters drops anyway
+  // ht (Haitian Creole): no word list package exists, so its sessions have no "Real words only" or real-word badge
 };
+
+// Whether a language has a word list. Mirrored by DICTIONARY_LANGUAGES in public/js/app.js.
+const has = (lang) => Object.hasOwn(SOURCES, lang);
 
 const allWords = new Map();   // lang → string[] (normalized, deduped)
 const wordSets = new Map();   // lang → Set
@@ -48,4 +53,4 @@ function isWord(lang, letters) {
   return getSet(lang).has(normalizeLetters(letters));
 }
 
-module.exports = { getSet, getRange, isWord };
+module.exports = { has, getSet, getRange, isWord };

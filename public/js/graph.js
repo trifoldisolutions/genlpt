@@ -1,7 +1,11 @@
-// Cytoscape wrapper: root → 4 branches → words (and child words). Updated incrementally.
-import { BRANCHES, COLORS } from './i18n.js';
+// Cytoscape wrapper: root → 4 branches → words (and child words). Updated incrementally. Two layouts:
+// 'network' (force-directed dots, the default) and 'org' (an org chart: the branches in a row under the root, each
+// with its words listed below it, in boxes joined by elbow lines).
+import { BRANCHES } from './i18n.js';
 
-// Runs synchronously (animate: false); the motion afterwards is ours, see animateFrom().
+export const LAYOUTS = ['network', 'org'];
+
+// Network: runs synchronously (animate: false); the motion afterwards is ours, see animateFrom().
 const LAYOUT = {
   name: 'cose',
   animate: false,
@@ -34,99 +38,225 @@ const TYPE_BASE = 14;
 const TYPE_RATIO = 1.2;
 const TEXT_SM = TYPE_BASE / TYPE_RATIO; // ~11.7
 const TEXT_XS = TYPE_BASE / TYPE_RATIO ** 2; // ~9.7
-const INK = {
-  canvas: '#fafafa', // zinc-50
-  edge: '#d4d4d8', // zinc-300
-  muted: '#a1a1aa', // zinc-400
-  label: '#52525b', // zinc-600
-  strong: '#3f3f46', // zinc-700
-  brand: '#de247d', // cerise-600
-  halo: '#fcceea', // cerise-200
+// Per theme (data-theme on <html>): the palette's shades and branch colors from src/input.css, in hex since
+// Cytoscape can't read CSS variables, or their oklch and color-mix() values
+const SPECTRUM = { who: '#6366f1', what: '#10b981', how: '#f59e0b', why: '#0ea5e9' };
+const INKS = {
+  light: {
+    canvas: '#fafafa', // zinc-50
+    surface: '#fff',
+    edge: '#d4d4d8', // zinc-300
+    muted: '#a1a1aa', // zinc-400
+    label: '#52525b', // zinc-600
+    strong: '#3f3f46', // zinc-700
+    brand: '#de247d', // brand
+    halo: '#fcceea', // cerise-200
+    branch: SPECTRUM, // --color-who…
+  },
+  dark: {
+    canvas: '#141416',
+    surface: '#1c1c1f',
+    edge: '#44444b',
+    muted: '#6e6e78',
+    label: '#b9b9c2',
+    strong: '#d1d1d7',
+    brand: '#de247d',
+    halo: '#802557',
+    branch: SPECTRUM,
+  },
+  gold: {
+    canvas: '#070707',
+    surface: '#0f0f0f',
+    edge: '#383838',
+    muted: '#6b6b6b',
+    label: '#b8b8b8',
+    strong: '#d2d2d2',
+    brand: '#d6a53c',
+    halo: '#6e5725',
+    branch: { who: '#f2f2f2', what: '#ecd08a', how: '#d6a53c', why: '#9f7628' },
+  },
+};
+const inkOf = (theme) => INKS[theme] || INKS.light;
+// A node's branch color; an edge's is its child's
+const branchColor = (ink) => (ele) => ink.branch[(ele.isEdge() ? ele.target() : ele).data('branch')];
+
+// Org chart spacing; a box is as wide as its label (up to maxLabel, then an ellipsis) plus padX on each side
+const ORG = {
+  rankGap: 44, // from the root down to the branches
+  colGap: 32, // between branch columns
+  rowGap: 8, // between a box and the next one in a list
+  arm: 16, // from a list's line to its boxes
+  padX: 10,
+  maxLabel: 160,
+  radius: 6, // rounded-md
+};
+const ORG_FONT = {
+  branch: `600 ${TYPE_BASE}px ${FONT}`,
+  word: `400 ${TEXT_SM}px ${FONT}`,
 };
 
-function style() {
-  return [
-    {
-      selector: 'node',
-      style: {
-        shape: 'ellipse',
-        label: 'data(label)',
-        'text-valign': 'bottom',
-        'text-halign': 'center',
-        'text-margin-y': 6,
-        'text-wrap': 'ellipsis',
-        'text-max-width': 140,
-        'text-outline-color': INK.canvas,
-        'text-outline-width': 1.5,
-        'font-family': FONT,
-        'font-size': TEXT_XS,
-        color: INK.label,
-        'min-zoomed-font-size': 7,
-        'border-width': 0,
-        'transition-property': 'opacity, background-color, border-width, border-color',
-        'transition-duration': 150,
-      },
-    },
-    {
-      selector: 'node[type="root"]',
-      style: {
-        label: '',
-        width: 28,
-        height: 28,
-        'background-color': INK.brand,
-        'border-width': 6,
-        'border-color': INK.halo,
-        'border-opacity': 0.5,
-      },
-    },
-    {
-      selector: 'node[type="branch"]',
-      style: {
-        width: 18,
-        height: 18,
-        'background-color': 'data(color)',
-        'font-size': TEXT_SM,
-        'font-weight': 600,
-        color: INK.strong,
-      },
-    },
-    {
-      selector: 'node[type="word"]',
-      style: {
-        width: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
-        height: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
-        'background-color': 'data(color)',
-      },
-    },
-    {
-      selector: 'node[type="word"].off',
-      style: {
-        'background-color': '#fff',
-        'border-width': 1.5,
-        'border-color': 'data(color)',
-        'border-opacity': 0.5,
-        color: INK.muted,
-      },
-    },
-    {
-      selector: 'edge',
-      style: {
-        width: 1,
-        'line-color': INK.edge,
-        opacity: 0.9,
-        'curve-style': 'straight',
-        'transition-property': 'opacity, line-color',
-        'transition-duration': 150,
-      },
-    },
-    { selector: 'edge.near', style: { 'line-color': 'data(color)', opacity: 1 } },
-    { selector: '.faded', style: { opacity: 0.12 } },
-    { selector: '.dim', style: { opacity: 0.12 } },
-    { selector: 'node.hl, node.active', style: { 'border-width': 2, 'border-color': INK.brand, 'border-opacity': 1, 'z-index': 10 } },
-    // Added but not revealed yet; last so it beats .faded / .dim / .near.
-    { selector: '.unborn', style: { opacity: 0, events: 'no' } },
-  ];
+// Label widths, measured in the font they're drawn in; cleared once the UI font has loaded
+const measurer = document.createElement('canvas').getContext('2d');
+const labelWidths = new Map();
+function labelWidth(text, font) {
+  const key = `${font}|${text}`;
+  if (!labelWidths.has(key)) {
+    measurer.font = font;
+    labelWidths.set(key, measurer.measureText(text).width);
+  }
+  return labelWidths.get(key);
 }
+const boxWidth = (font) => (n) => Math.min(labelWidth(n.data('label') || '', font), ORG.maxLabel) + 2 * ORG.padX;
+
+const baseStyle = (ink) => [
+  {
+    selector: 'node',
+    style: {
+      shape: 'ellipse',
+      label: 'data(label)',
+      'text-valign': 'bottom',
+      'text-halign': 'center',
+      'text-margin-y': 6,
+      'text-wrap': 'ellipsis',
+      'text-max-width': 140,
+      'text-outline-color': ink.canvas,
+      'text-outline-width': 1.5,
+      'font-family': FONT,
+      'font-size': TEXT_XS,
+      color: ink.label,
+      'min-zoomed-font-size': 7,
+      'border-width': 0,
+      'transition-property': 'opacity, background-color, border-width, border-color',
+      'transition-duration': 150,
+    },
+  },
+  {
+    selector: 'node[type="root"]',
+    style: {
+      label: '',
+      width: 28,
+      height: 28,
+      'background-color': ink.brand,
+      'border-width': 6,
+      'border-color': ink.halo,
+      'border-opacity': 0.5,
+    },
+  },
+  {
+    selector: 'edge',
+    style: {
+      width: 1,
+      'line-color': ink.edge,
+      opacity: 0.9,
+      'curve-style': 'straight',
+      'transition-property': 'opacity, line-color',
+      'transition-duration': 150,
+    },
+  },
+];
+
+const networkStyle = (ink) => [
+  {
+    selector: 'node[type="branch"]',
+    style: {
+      width: 18,
+      height: 18,
+      'background-color': branchColor(ink),
+      'font-size': TEXT_SM,
+      'font-weight': 600,
+      color: ink.strong,
+    },
+  },
+  {
+    selector: 'node[type="word"]',
+    style: {
+      width: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
+      height: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
+      'background-color': branchColor(ink),
+    },
+  },
+  {
+    selector: 'node[type="word"].off',
+    style: {
+      'background-color': ink.surface,
+      'border-width': 1.5,
+      'border-color': branchColor(ink),
+      'border-opacity': 0.5,
+      color: ink.muted,
+    },
+  },
+];
+
+// The root stays the brand dot; the branches are tinted boxes, the words white ones edged in their branch's color
+// (dashed and grey when deselected). A list's line drops from the middle of its parent's box: round-taxi edges
+// at a 100% turn fall back to an L (down, then across into the box's side).
+const orgStyle = (ink) => [
+  {
+    selector: 'node[type="branch"], node[type="word"]',
+    style: {
+      shape: 'round-rectangle',
+      'corner-radius': ORG.radius,
+      'text-valign': 'center',
+      'text-margin-y': 0,
+      'text-max-width': ORG.maxLabel,
+      'text-outline-width': 0,
+      color: ink.strong,
+    },
+  },
+  {
+    selector: 'node[type="branch"]',
+    style: {
+      width: boxWidth(ORG_FONT.branch),
+      height: 28,
+      'background-color': branchColor(ink),
+      'background-opacity': 0.14,
+      'border-width': 1.5,
+      'border-color': branchColor(ink),
+      'font-size': TYPE_BASE,
+      'font-weight': 600,
+    },
+  },
+  {
+    selector: 'node[type="word"]',
+    style: {
+      width: boxWidth(ORG_FONT.word),
+      height: 24,
+      'background-color': ink.surface,
+      'border-width': 1,
+      'border-color': branchColor(ink),
+      'border-opacity': 0.6,
+      'font-size': TEXT_SM,
+    },
+  },
+  {
+    selector: 'node[type="word"].off',
+    style: { 'border-style': 'dashed', 'border-color': ink.muted, color: ink.muted },
+  },
+  {
+    selector: 'edge',
+    style: {
+      width: 1.25,
+      opacity: 1, // lines in a list overlap: see-through ones would darken where they do
+      'curve-style': 'round-taxi',
+      'taxi-direction': 'downward',
+      'taxi-turn': '100%',
+      'taxi-radius': ORG.radius,
+    },
+  },
+  { selector: 'edge[source = "root"]', style: { 'taxi-turn': '50%', 'taxi-radius': 8 } },
+];
+
+// Last, so they beat the layout's own rules
+const stateStyle = (ink) => [
+  { selector: 'edge.near', style: { 'line-color': branchColor(ink), opacity: 1 } },
+  { selector: '.faded', style: { opacity: 0.12 } },
+  { selector: '.dim', style: { opacity: 0.12 } },
+  { selector: 'node.hl, node.active', style: { 'border-width': 2, 'border-color': ink.brand, 'border-opacity': 1, 'z-index': 10 } },
+  // Added but not revealed yet; last so it beats .faded / .dim / .near.
+  { selector: '.unborn', style: { opacity: 0, events: 'no' } },
+];
+
+const style = (layout, ink) => [...baseStyle(ink), ...(layout === 'org' ? orgStyle(ink) : networkStyle(ink)), ...stateStyle(ink)];
 
 // Resolves once the UI font is usable on canvas, so label widths are measured correctly.
 function fontsLoaded() {
@@ -134,26 +264,31 @@ function fontsLoaded() {
   return Promise.all([
     document.fonts.load(`400 ${TEXT_XS}px ${FONT}`),
     document.fonts.load(`600 ${TEXT_SM}px ${FONT}`),
+    document.fonts.load(ORG_FONT.branch),
+    document.fonts.load(ORG_FONT.word),
   ]).then(() => document.fonts.ready).catch(() => {});
 }
 
-export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onViewportChange, onBackgroundTap, getVisibleRect }) {
+export function createGraph(container, { layout = 'network', theme = 'light', onWordTap, onWordMenu, onBranchTap, onViewportChange, onBackgroundTap, getVisibleRect }) {
+  if (!LAYOUTS.includes(layout)) layout = 'network';
+  let ink = inkOf(theme);
   const cy = window.cytoscape({
     container,
-    style: style(),
+    style: style(layout, ink),
     wheelSensitivity: 0.3,
     minZoom: 0.2,
     maxZoom: 3,
     boxSelectionEnabled: false,
     selectionType: 'single',
     autounselectify: true,
+    autoungrabify: layout === 'org', // dragging would undo the chart's order
   });
 
   cy.add({ data: { id: 'root', type: 'root', label: '' }, classes: 'unborn', position: { x: 0, y: 0 } });
   BRANCHES.forEach((b, i) => {
     const angle = (Math.PI / 2) * i - Math.PI / 4;
-    cy.add({ data: { id: `b-${b}`, type: 'branch', branch: b, color: COLORS[b], label: b }, classes: 'unborn', position: { x: Math.cos(angle) * 160, y: Math.sin(angle) * 160 } });
-    cy.add({ data: { id: `e-b-${b}`, source: 'root', target: `b-${b}`, color: COLORS[b] }, classes: 'unborn' });
+    cy.add({ data: { id: `b-${b}`, type: 'branch', branch: b, label: b }, classes: 'unborn', position: { x: Math.cos(angle) * 160, y: Math.sin(angle) * 160 } });
+    cy.add({ data: { id: `e-b-${b}`, source: 'root', target: `b-${b}` }, classes: 'unborn' });
   });
 
   // A long-press opens the menu; ignore the tap that may follow it.
@@ -228,10 +363,63 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     settle();
     const doFit = fit || firstLayout || !userMoved;
     const from = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
-    cy.layout({ ...LAYOUT, fit: false }).run();
+    if (layout === 'org') {
+      const to = orgPositions();
+      cy.nodes().positions((n) => to.get(n.id()));
+    } else {
+      cy.layout({ ...LAYOUT, fit: false }).run();
+    }
     if (doFit) fitToVisible({ animate: !firstLayout });
     firstLayout = false;
     animateFrom(from);
+  }
+
+  // The branches side by side under the root (which sits above the middle of their row), each box's words in a
+  // list below it, starting `arm` right of the line that drops from the box's middle; then the next list down.
+  function orgPositions() {
+    const to = new Map();
+    const seen = new Set();
+    const kids = (n) => n.outgoers('node').sort((a, b) => (a.data('order') ?? 0) - (b.data('order') ?? 0));
+    // Places n with its top-left corner at (left, top), then its list; returns how far down and right they reach
+    const place = (n, left, top) => {
+      seen.add(n.id());
+      const w = n.outerWidth();
+      const h = n.outerHeight();
+      to.set(n.id(), { x: left + w / 2, y: top + h / 2 });
+      let bottom = top + h;
+      let right = left + w;
+      kids(n).forEach((k) => {
+        if (seen.has(k.id())) return;
+        const r = place(k, left + w / 2 + ORG.arm, bottom + ORG.rowGap);
+        bottom = r.bottom;
+        right = Math.max(right, r.right);
+      });
+      return { bottom, right };
+    };
+    const root = cy.getElementById('root');
+    const top = root.outerHeight() / 2 + ORG.rankGap;
+    let left = 0;
+    BRANCHES.forEach((b) => { left = place(cy.getElementById(`b-${b}`), left, top).right + ORG.colGap; });
+    const mid = (to.get(`b-${BRANCHES[0]}`).x + to.get(`b-${BRANCHES.at(-1)}`).x) / 2;
+    to.forEach((p) => { p.x -= mid; });
+    to.set('root', { x: 0, y: 0 });
+    return to;
+  }
+
+  function setLayout(next) {
+    if (!LAYOUTS.includes(next) || next === layout) return;
+    layout = next;
+    settle();
+    cy.style(style(layout, ink));
+    cy.autoungrabify(layout === 'org');
+    userMoved = false;
+    if (!firstLayout) runLayout({ fit: true }); // nodes glide from one layout to the other
+  }
+
+  // Recolors in place: nothing moves
+  function setTheme(next) {
+    ink = inkOf(next);
+    cy.style(style(layout, ink));
   }
 
   // From 12 o'clock around `center`: dir 1 clockwise, -1 anti-clockwise.
@@ -276,9 +464,16 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
       n.style({ width: 2, height: 2, 'border-width': 0 })
         .animate({ style: size }, { duration: MOTION.pop, easing: POP_EASING, complete: () => n.removeStyle('width height border-width') });
     };
+    // Org chart: the branches open left to right, each list top to bottom
+    const reading = (nodes) => nodes.toArray().sort((a, b) => {
+      const pa = end.get(a.id());
+      const pb = end.get(b.id());
+      return pa.x - pb.x || pa.y - pb.y;
+    });
     const visitKids = (p, t) => {
-      // The four branches open clockwise around the root; the words around them anti-clockwise.
-      const kids = sweep(p.outgoers('node').filter('.unborn'), end.get(p.id()), p.id() === 'root' ? 1 : -1);
+      // Network: the four branches open clockwise around the root; the words around them anti-clockwise.
+      const unborn = p.outgoers('node').filter('.unborn');
+      const kids = layout === 'org' ? reading(unborn) : sweep(unborn, end.get(p.id()), p.id() === 'root' ? 1 : -1);
       const gap = kids.length > 1 ? Math.min(MOTION.sibling, MOTION.spread / (kids.length - 1)) : 0;
       kids.forEach((k, i) => visit(k, t + i * gap, p));
     };
@@ -313,6 +508,7 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
 
   fontsLoaded().then(() => {
     fontsReady = true;
+    labelWidths.clear(); // measured in a fallback font until now
     cy.style().update();
     if (queued) { const q = queued; queued = null; runLayout(q); }
   });
@@ -324,8 +520,10 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
   // words: session.words. Adds/updates/removes elements; re-runs layout when nodes were added.
   function syncWords(words) {
     const ids = new Set(words.map((w) => String(w._id)));
+    const order = new Map(words.map((w, i) => [String(w._id), i])); // the org chart lists words in this order
     let added = 0;
     let removed = 0;
+    let reshaped = 0; // relabeled, reordered or moved to another parent: the org chart's boxes shift
 
     cy.batch(() => {
       cy.nodes('[type="word"]').forEach((n) => {
@@ -345,21 +543,23 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
           pending.splice(i, 1);
           const existing = cy.getElementById(id);
           if (existing.nonempty()) {
-            existing.data('label', w.text);
+            if (existing.data('label') !== w.text || existing.data('order') !== order.get(id)) reshaped++;
+            existing.data({ label: w.text, order: order.get(id) });
             existing.toggleClass('off', !w.selected);
             const edge = cy.getElementById(`e-${id}`);
             if (edge.nonempty() && edge.data('source') !== parent) {
               cy.remove(edge);
-              cy.add({ data: { id: `e-${id}`, source: parent, target: id, color: COLORS[w.branch] } });
+              cy.add({ data: { id: `e-${id}`, source: parent, target: id } });
+              reshaped++;
             }
           } else {
             const p = cy.getElementById(parent).position();
             cy.add({
-              data: { id, type: 'word', branch: w.branch, color: COLORS[w.branch], label: w.text },
+              data: { id, type: 'word', branch: w.branch, label: w.text, order: order.get(id) },
               classes: w.selected ? 'unborn' : 'off unborn',
               position: { x: p.x + (Math.random() - 0.5) * 80, y: p.y + (Math.random() - 0.5) * 80 },
             });
-            cy.add({ data: { id: `e-${id}`, source: parent, target: id, color: COLORS[w.branch] }, classes: 'unborn' });
+            cy.add({ data: { id: `e-${id}`, source: parent, target: id }, classes: 'unborn' });
             added++;
           }
           placed.add(id);
@@ -370,12 +570,15 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     if (added || removed) cy.style().update(); // node size depends on degree
     if (added) runLayout();
     else if (removed && firstLayout) runLayout();
+    else if ((removed || reshaped) && layout === 'org') runLayout(); // close the gaps, refit the columns
     return { added, removed };
   }
 
   function setLabels({ root, branches }) {
     cy.getElementById('root').data('label', root);
-    BRANCHES.forEach((b) => cy.getElementById(`b-${b}`).data('label', branches[b]));
+    const relabeled = BRANCHES.filter((b) => cy.getElementById(`b-${b}`).data('label') !== branches[b]);
+    relabeled.forEach((b) => cy.getElementById(`b-${b}`).data('label', branches[b]));
+    if (relabeled.length && layout === 'org' && !firstLayout) runLayout(); // a branch box's width changed
   }
 
   function highlight(wordIds) {
@@ -414,6 +617,8 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     cy,
     syncWords,
     setLabels,
+    setLayout,
+    setTheme,
     highlight,
     clearHighlight,
     setActive,

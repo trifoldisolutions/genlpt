@@ -1,6 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const BrainstormSession = require('../models/BrainstormSession');
+const User = require('../models/User');
+const brand = require('../config/brand');
 const llm = require('../services/llm');
 const prompts = require('../services/llm/prompts');
 const dictionary = require('../services/acronym/dictionary');
@@ -9,20 +11,36 @@ const { generateEngineCandidates, candidateKey, buildPool, letterCapacity } = re
 const { candidateFromName } = require('../services/acronym/compose');
 const { phraseParts } = require('../services/acronym/phrase');
 const { resolveOwner, ensureOwner, guestOwner, clearGuest, keepGuest, GUEST_TTL_MS } = require('../middleware/owner');
+const {
+  signIn,
+  signOut,
+  signOutEverywhere,
+  sameOrigin,
+  normalizeEmail,
+  cleanName,
+  emailProblem,
+  nameProblem,
+  passwordProblem,
+} = require('../middleware/auth');
+const { tooMany, mailAllowed, tooManyMessage } = require('../middleware/rateLimit');
+const account = require('../services/account');
+const { sendEmail, link } = require('../services/email');
+const emails = require('../services/email/templates');
 const usage = require('../services/usage');
+const spend = require('../services/spend');
 const domains = require('../services/domains');
 const meter = require('../services/llm/meter');
+const runs = require('../services/runs');
 const AiAction = require('../models/AiAction');
 
-const { ANSWER_MIN_CHARS, ANSWER_MAX_CHARS, answerLength } = require('../config/limits');
+const { ANSWER_MIN_CHARS, ANSWER_MAX_CHARS, PASSWORD_MAX_CHARS, EXPAND_DEPTH, answerLength } = require('../config/limits');
 
-const { BRANCHES, TITLE_SOURCES, MAX_WORDS, MAX_ACRONYMS } = BrainstormSession;
-const LANGUAGES = ['fr', 'en'];
+const { BRANCHES, TITLE_SOURCES, LANGUAGES, MAX_WORDS, MAX_ACRONYMS, wordDepth } = BrainstormSession;
 const TITLE_MAX_WORDS = 5;
 const NAME_CAP = 36; // "Real words only": dictionary words the LLM names, one request each
 const RANK_BATCH = 12;
 const DOMAIN_BATCH = 10; // acronyms per domain check request (each new name is a registry lookup, 4 per acronym)
-const FATAL = new Set(['llm_unavailable', 'llm_timeout']); // stop calling the LLM after these
+const FATAL = new Set(['llm_unavailable', 'llm_timeout', 'ai_paused']); // stop calling the LLM after these
 
 const router = express.Router();
 
@@ -36,61 +54,94 @@ class ApiError extends Error {
   }
 }
 
-const dbReady = () => mongoose.connection.readyState === 1;
+// An error's JSON answer, { status, body }: the error handler's, and a background run's (stored for its poll).
+// An unexpected error is logged and answered as server_error.
+function errorReply(err) {
+  if (err instanceof ApiError || err instanceof llm.LLMError) {
+    return { status: err.status, body: { error: err.code, message: err.message, ...err.extra } };
+  }
+  console.error('[api]', err);
+  return { status: 500, body: { error: 'server_error', message: 'Unexpected server error' } };
+}
+
+const dbReady =() => mongoose.connection.readyState === 1;
 const isId = (id) => mongoose.isValidObjectId(id) && /^[a-f0-9]{24}$/i.test(String(id));
 // Guests always get the guest model (config/models.js), whatever the session says; other plans pick any listed one
 const modelFor = (req, session) => (usage.limitsOf(req).allModels ? session.model || llm.defaultModel() : llm.guestModel());
 
-// Counts one AI action (usage.take) or refuses with 429 usage_limit. A request that then fails gives it back,
-// and so does one that adds nothing: call the returned giveBack(). req.usage is the count to send the page.
-// sessionId: for a kind counted per session (reformulations).
-async function useAi(req, res, kind, sessionId = null) {
+// Counts one AI action (usage.take) or refuses with 429 usage_limit, or with 503 ai_paused once the day's platform
+// spend is past the plan's line (services/spend.js). A request that then fails gives it back, and so does one that
+// adds nothing: call the returned giveBack(). req.usage is the count to send the page; giveBack.taken where it was
+// counted ({ path, windows }), for a background job to give it back after its request (services/runs.js).
+// sessionId: for a kind counted per session (reformulations). aiMeter: the meter it's counted on (the request's).
+async function useAi(req, res, kind, { sessionId = null, aiMeter = req.meter } = {}) {
+  const plan = usage.planOf(req);
+  const pause = await spend.check(plan);
+  if (pause.paused) {
+    throw new ApiError(503, 'ai_paused', `AI processing is paused for this plan until ${pause.resetAt.toISOString()}`, { resetAt: pause.resetAt, plan });
+  }
   const r = await usage.take(req, kind, sessionId);
   if (!r.ok) {
-    throw new ApiError(429, 'usage_limit', `No ${kind} left until ${r.resetAt.toISOString()}`, { kind, resetAt: r.resetAt, plan: usage.planOf(req) });
+    throw new ApiError(429, 'usage_limit', `No ${kind} left until ${r.resetAt.toISOString()}`, { kind, resetAt: r.resetAt, plan });
   }
   req.usage = r.view;
-  if (req.meter) req.meter.counted = true;
+  if (aiMeter) aiMeter.counted = true;
   let given = false;
   const giveBack = async () => {
     if (given) return;
     given = true;
-    if (req.meter) req.meter.counted = false;
+    if (aiMeter) aiMeter.counted = false;
     await usage.giveBack(r.taken, r.path);
     req.usage = await usage.view(req);
   };
+  giveBack.taken = { path: r.path, windows: r.taken.map(({ _id, startedAt }) => ({ _id, startedAt })) };
   res.on('finish', () => { if (res.statusCode >= 400) giveBack().catch(() => {}); });
   return giveBack;
 }
 
-// An AI action's route: every LLM call it makes is metered (services/llm/meter.js) and, once the response is
-// sent, saved as one AiAction with its cost, tokens and time, for npm run usage:report. The route may set
-// req.meter.variant and req.meter.result; useAi and the error handler fill in the rest. No call, no record.
-function metered(kind) {
-  return (req, res, next) => {
-    const started = Date.now();
-    const sessionId = isId(req.params.id) ? req.params.id : null;
-    req.meter = { calls: [], counted: false, variant: null, result: null, error: null };
-    res.on('finish', () => {
-      const m = req.meter;
-      if (!m.calls.length || !dbReady()) return;
+// An AI action's meter: every LLM call made in its context (meter.run) is recorded on it, through the plan's key,
+// and save(status) keeps it as one AiAction with its cost, tokens and time, for npm run usage:report; the cost also
+// goes on the day's platform spend (services/spend.js). Its time runs from `started`. Saved once; no call, no record.
+function openMeter(req, kind) {
+  const sessionId = isId(req.params.id) ? req.params.id : null;
+  const plan = usage.planOf(req);
+  const m = { calls: [], plan, counted: false, variant: null, result: null, error: null, background: false, saved: false, started: Date.now() };
+  const record = async (status) => {
+    if (m.saved || !m.calls.length || !dbReady()) return;
+    m.saved = true;
+    const totals = meter.totals(m.calls);
+    await Promise.all([
+      spend.add(plan, totals.cost).catch((err) => console.error('[spend]', err.message)),
       AiAction.create({
         kind,
         variant: m.variant,
-        plan: usage.planOf(req),
+        plan,
         owner: req.owner,
         sessionId,
         provider: llm.providerName(),
         settings: llm.settings(m.calls[0].model),
-        status: res.statusCode,
+        status,
         error: m.error,
-        counted: m.counted && res.statusCode < 400,
+        counted: m.counted && status < 400,
         result: m.result,
-        ms: Date.now() - started,
+        ms: Date.now() - m.started,
         calls: m.calls,
-        ...meter.totals(m.calls),
-      }).catch((err) => console.error('[usage meter]', err.message));
-    });
+        ...totals,
+      }).catch((err) => console.error('[usage meter]', err.message)),
+    ]);
+  };
+  m.save = (status) => record(status).catch((err) => console.error('[usage meter]', err.message));
+  return m;
+}
+
+// An AI action's route: its meter is req.meter, saved once the response is sent. The route may set req.meter.variant
+// and req.meter.result; useAi and the error handler fill in the rest.
+// A route that goes on after answering (a background job) sets req.meter.background and calls req.meter.save(status)
+// once it's over: its calls are still recorded here, since they run in the request's async context.
+function metered(kind) {
+  return (req, res, next) => {
+    req.meter = openMeter(req, kind);
+    res.on('finish', () => { if (!req.meter.background) req.meter.save(res.statusCode); });
     meter.run(req.meter, next);
   };
 }
@@ -198,11 +249,18 @@ async function suggestTitle(session, answers, model) {
 // Health & LLM
 
 // Public (guests use the app too): llm.isAvailable() keeps its answer, so a flood of these doesn't become
-// calls to the provider.
+// calls to the provider. llm: whether this viewer's plan's key works.
+// The host's check before it sends traffic to a new deploy (railway.json): 503 until MongoDB is connected, so the
+// first visitors don't meet "database unavailable", and again once the server is stopping (services/runs.js)
+router.get('/ready', (req, res) => {
+  const ready = dbReady() && runs.accepting();
+  res.status(ready ? 200 : 503).json({ ready });
+});
+
 router.get('/health', async (req, res) => {
   res.json({
     db: dbReady(),
-    llm: await llm.isAvailable(),
+    llm: await llm.isAvailable(usage.planOf(req)),
     defaultModel: llm.defaultModel(),
   });
 });
@@ -212,6 +270,12 @@ router.get('/models', (req, res) => {
   const models = llm.listModels();
   const only = usage.limitsOf(req).allModels ? null : llm.guestModel();
   res.json({ models: models.map((m) => ({ ...m, allowed: !only || m.name === only })), defaultModel: llm.defaultModel() });
+});
+
+// For the settings' Usage and Billing tabs: the plan's AI limits and this window's counts, fresh (another tab may
+// have used some), and the plan's price and dates
+router.get('/usage', requireDb, resolveOwner, async (req, res) => {
+  res.json({ usage: await usage.view(req), plan: usage.planDetails(req) });
 });
 
 // ---------------------------------------------------------------------------
@@ -257,20 +321,27 @@ router.post('/sessions', restartBlankGuest, ensureOwner, async (req, res) => {
   const session = await BrainstormSession.create({
     owner: req.owner,
     expiresAt,
-    language: LANGUAGES.includes(language) ? language : 'fr',
+    language: LANGUAGES.includes(language) ? language : 'en',
     model: !usage.limitsOf(req).allModels ? llm.guestModel() : typeof model === 'string' ? model.slice(0, 200) : '',
   });
   res.status(201).json({ session, expiresInMs: expiresInMs(expiresAt) });
 });
 
 router.get('/sessions/:id', async (req, res) => {
-  res.json({ session: forViewer(req, await loadSession(req)) });
+  let session = await loadSession(req);
+  // Its acronym run's server is gone: ended here, so the page doesn't wait for it (services/runs.js)
+  if (runs.isStale(session.run)) {
+    await runs.interrupt(session._id);
+    session = await loadSession(req);
+  }
+  res.json({ session: forViewer(req, session) });
 });
 
 router.patch('/sessions/:id', async (req, res) => {
   if (!isId(req.params.id)) throw new ApiError(404, 'session_not_found', 'Session not found');
   const body = req.body || {};
   const $set = {};
+  const filter = owned(req, { _id: req.params.id });
   if (body.title !== undefined) {
     if (typeof body.title !== 'string' || body.title.length > 120) throw new ApiError(400, 'invalid_title', 'Title must be ≤ 120 characters');
     $set.title = body.title.trim();
@@ -281,8 +352,11 @@ router.patch('/sessions/:id', async (req, res) => {
     $set.titleSource = body.titleSource;
   }
   if (body.language !== undefined) {
-    if (!LANGUAGES.includes(body.language)) throw new ApiError(400, 'invalid_language', 'Language must be fr or en');
+    if (!LANGUAGES.includes(body.language)) throw new ApiError(400, 'invalid_language', `Language must be one of: ${LANGUAGES.join(', ')}`);
     $set.language = body.language;
+    // Fixed once step 1 is done: the words and acronyms are in the language they were made in.
+    // In the filter, so words generated meanwhile (another tab) still lock it.
+    filter.$or = [{ language: body.language }, { words: { $size: 0 }, acronyms: { $size: 0 } }];
   }
   if (body.model !== undefined) {
     if (typeof body.model !== 'string' || body.model.length > 200) throw new ApiError(400, 'invalid_model', 'Invalid model');
@@ -302,8 +376,12 @@ router.patch('/sessions/:id', async (req, res) => {
       $set[`answers.${b}`] = body.answers[b].replace(/\s+/g, ' ').trim();
     }
   }
-  const session = await BrainstormSession.findOneAndUpdate(owned(req, { _id: req.params.id }), { $set }, { returnDocument: 'after', runValidators: true });
-  if (!session) throw new ApiError(404, 'session_not_found', 'Session not found');
+  const session = await BrainstormSession.findOneAndUpdate(filter, { $set }, { returnDocument: 'after', runValidators: true });
+  if (!session) {
+    const current = filter.$or && await BrainstormSession.findOne(owned(req, { _id: req.params.id }), { language: 1 }).lean();
+    if (current) throw new ApiError(409, 'language_locked', 'The language can’t change once the session has words', { language: current.language });
+    throw new ApiError(404, 'session_not_found', 'Session not found');
+  }
   res.json({ session: { _id: session._id, title: session.title, titleSource: session.titleSource, language: session.language, model: session.model, answers: session.answers, updatedAt: session.updatedAt } });
 });
 
@@ -339,7 +417,7 @@ router.post('/sessions/:id/answers/:branch/reformulate', metered('reformulations
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
   const original = (answers[branch] || '').trim();
   if (!original) throw new ApiError(422, 'no_answer', 'Write an answer first');
-  const giveBack = await useAi(req, res, 'reformulations', session._id);
+  const giveBack = await useAi(req, res, 'reformulations', { sessionId: session._id });
   const p = prompts.reformulateAnswer({
     language: session.language,
     branch,
@@ -394,11 +472,114 @@ router.delete('/guest-sessions', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Account (settings → Account and Billing): the signed-in user changes their name, email address or password, lists
+// their payments, downloads everything kept about them, or deletes the account with all of it (services/account.js).
+// Notice emails go out after the response; they never hold it up or change it.
+
+router.use('/account', requireDb, (req, res, next) => {
+  if (!req.user) throw new ApiError(401, 'not_signed_in', 'Log in first');
+  next();
+});
+
+const later = (label, fn) => fn().catch((err) => console.error(`[${label}]`, err.message));
+
+// The account's password, for changes a login left open on a shared computer mustn't be enough for. Attempts count on
+// the login limits, so this is no way around them to guess it. Returns the user, with its password hash.
+async function checkPassword(req, res) {
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const wait = await tooMany(['loginIp', req.ip], ['loginEmail', req.user.email]);
+  if (wait) {
+    res.set('Retry-After', String(wait));
+    throw new ApiError(429, 'too_many_attempts', tooManyMessage(wait));
+  }
+  const user = await User.findById(req.user._id).select('+passwordHash');
+  if (!user) throw new ApiError(401, 'not_signed_in', 'Log in first');
+  if (password.length > PASSWORD_MAX_CHARS || !(await user.checkPassword(password))) {
+    throw new ApiError(403, 'wrong_password', 'Wrong password');
+  }
+  return user;
+}
+
+router.patch('/account', sameOrigin, async (req, res) => {
+  const name = cleanName(req.body?.name);
+  const problem = nameProblem(name);
+  if (problem) throw new ApiError(422, 'invalid_name', problem);
+  await User.updateOne({ _id: req.user._id }, { $set: { name } });
+  res.json({ name });
+});
+
+// A new email address waits for the link sent to it (routes/app.js /confirm-email). The answer is the same whether
+// the address has an account or not: either way the change waits, and the address gets the email that fits. One that
+// already has a confirmed account gets a notice instead of a link, so the change can't complete.
+router.post('/account/email', sameOrigin, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const problem = emailProblem(email);
+  if (problem) throw new ApiError(422, 'invalid_email', problem);
+  if (email === req.user.email) throw new ApiError(422, 'same_email', 'That is already your email address');
+  await checkPassword(req, res);
+  const token = await account.requestEmailChange(req.user._id, email);
+  later('email change email', async () => {
+    if (!(await mailAllowed(email))) return;
+    if (await User.exists({ email, emailVerifiedAt: { $ne: null } })) {
+      return sendEmail({ to: email, ...emails.emailInUse({ loginUrl: link('/app/login'), forgotUrl: link('/app/forgot') }) });
+    }
+    await sendEmail({ to: email, ...emails.confirmNewEmail({ url: link(`/app/confirm-email?token=${token}`) }) });
+  });
+  res.json({ pendingEmail: email });
+});
+
+router.delete('/account/email', sameOrigin, async (req, res) => {
+  await account.cancelEmailChange(req.user._id);
+  res.json({ pendingEmail: null });
+});
+
+// Takes the current password. Every other login of the account ends, and this one gets a new session id.
+router.post('/account/password', sameOrigin, async (req, res) => {
+  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+  const problem = passwordProblem(newPassword);
+  if (problem) throw new ApiError(422, 'weak_password', problem);
+  const user = await checkPassword(req, res);
+  await account.setPassword(user._id, newPassword);
+  await signOutEverywhere(user._id);
+  await signIn(req, user);
+  later('password changed email', async () => {
+    if (await mailAllowed(user.email)) await sendEmail({ to: user.email, ...emails.passwordChanged({ forgotUrl: link('/app/forgot') }) });
+  });
+  res.json({ changed: true });
+});
+
+// Settings → Billing's transaction history
+router.get('/account/transactions', async (req, res) => {
+  res.json(await account.transactions(req.user._id));
+});
+
+router.get('/account/export', async (req, res) => {
+  const data = await account.exportData(req.user._id);
+  if (!data) throw new ApiError(401, 'not_signed_in', 'Log in first');
+  res.set('Cache-Control', 'no-store');
+  res.attachment(`${brand.appName.toLowerCase()}-data-${data.exportedAt.slice(0, 10)}.json`);
+  res.type('json').send(JSON.stringify(data, null, 2));
+});
+
+// Takes the password. Every login of the account ends, this browser's guest is forgotten, and the address gets a notice.
+router.delete('/account', sameOrigin, async (req, res) => {
+  const { email } = req.user;
+  const user = await checkPassword(req, res);
+  await account.erase(user._id);
+  await signOutEverywhere(user._id);
+  await signOut(req, res);
+  clearGuest(req, res);
+  later('account deleted email', async () => {
+    if (await mailAllowed(email)) await sendEmail({ to: email, ...emails.accountDeleted() });
+  });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
 // Words
 
-router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
-  const session = await loadSession(req);
-  const requested = Array.isArray(req.body?.branches) ? req.body.branches : BRANCHES;
+// The answered branches among those requested, once each meets the minimum length
+function wordBranches(session, requested) {
   const branches = BRANCHES.filter((b) => requested.includes(b) && (session.answers?.[b] || '').trim());
   if (!branches.length) throw new ApiError(422, 'no_answers', 'Answer at least one question first');
   // Drafts may be short (autosave), but generation needs every answered branch to meet the minimum.
@@ -406,9 +587,23 @@ router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
     throw new ApiError(422, 'answer_too_short', `Each answer needs at least ${ANSWER_MIN_CHARS} characters (spaces not counted)`);
   }
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
-  const giveBack = await useAi(req, res, 'words');
-  const model = modelFor(req, session);
+  return branches;
+}
 
+router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
+  const session = await loadSession(req);
+  const branches = wordBranches(session, Array.isArray(req.body?.branches) ? req.body.branches : BRANCHES);
+  const giveBack = await useAi(req, res, 'words');
+  const { added, errors, title } = await branchWords({ session, branches, model: modelFor(req, session) });
+  if (added.length) await pushWords(session._id, added);
+  else await giveBack();
+  req.meter.result = { branches: branches.length, words: added.length, title: !!title };
+  res.json({ words: added, errors, title: title || null, usage: req.usage });
+});
+
+// Generate words, for branches: the words to add (not stored yet), each branch's error, and the session's AI title if
+// it gets one now. Throws when every branch failed.
+async function branchWords({ session, branches, model }) {
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
   // All four answered and no AI title yet: suggest one alongside the words.
   const wantTitle = branches.length === BRANCHES.length && !hasAiTitle(session);
@@ -429,7 +624,7 @@ router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
   const seen = wordKeys(session.words);
   results.forEach((r, i) => {
     if (r.status !== 'fulfilled') {
-      errors[branches[i]] = { error: r.reason.code || 'llm_error', message: r.reason.message };
+      errors[branches[i]] = { error: r.reason.code || 'llm_error', message: r.reason.message, ...r.reason.extra };
       return;
     }
     const words = cleanWordList(r.value, seen).slice(0, 12);
@@ -437,13 +632,8 @@ router.post('/sessions/:id/expand', metered('words'), async (req, res) => {
     added.push(...words.map((t) => newWord(branches[i], t, 'llm')));
   });
   if (!added.length && Object.keys(errors).length === branches.length) throw results[0].reason;
-
-  added = added.slice(0, MAX_WORDS - session.words.length);
-  if (added.length) await pushWords(session._id, added);
-  else await giveBack();
-  req.meter.result = { branches: branches.length, words: added.length, title: !!title };
-  res.json({ words: added, errors, title: title || null, usage: req.usage });
-});
+  return { added: added.slice(0, MAX_WORDS - session.words.length), errors, title };
+}
 
 router.post('/sessions/:id/words', async (req, res) => {
   const session = await loadSession(req);
@@ -523,6 +713,9 @@ router.delete('/sessions/:id/words/:wordId', async (req, res) => {
 router.post('/sessions/:id/words/:wordId/expand', metered('expansions'), async (req, res) => {
   const session = await loadSession(req);
   const seed = findWord(session, req.params.wordId);
+  if (wordDepth(session.words, seed) >= EXPAND_DEPTH) {
+    throw new ApiError(422, 'expand_depth', `Words ${EXPAND_DEPTH} expansions down can't be expanded`, { depth: EXPAND_DEPTH });
+  }
   if (session.words.length >= MAX_WORDS) throw new ApiError(422, 'word_limit', `A session can hold at most ${MAX_WORDS} words`);
   const giveBack = await useAi(req, res, 'expansions');
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
@@ -554,10 +747,12 @@ function intInRange(value, fallback) {
 // for variety. A failed request is skipped; if all fail, the error is thrown.
 async function composePass({ session, answers, selected, opts, model, calls }) {
   const idMap = new Map();
+  const lastRun = session.lastRunAt?.getTime();
   const idWords = selected.map((w, i) => {
     const id = `w${i + 1}`;
     idMap.set(id, w);
-    return { id, branch: w.branch, text: w.text };
+    // Made since the last run (an ObjectId starts with its second): the prompt asks for names that use them
+    return { id, branch: w.branch, text: w.text, fresh: !!lastRun && w._id.getTimestamp().getTime() > lastRun };
   });
   const p = prompts.composeNames({ language: session.language, answers, idWords, ...opts });
   const errors = [];
@@ -571,13 +766,14 @@ async function composePass({ session, answers, selected, opts, model, calls }) {
     }
   });
   if (errors.length === calls) throw errors[0];
-  const isWord = (w) => dictionary.isWord(session.language, w);
-  const dict = dictionary.getSet(session.language);
+  // Without a word list (Haitian Creole), reshaped words go unchecked and no acronym counts as a real word
+  const dict = dictionary.has(session.language) ? dictionary.getSet(session.language) : null;
+  const isWord = dict && ((w) => dictionary.isWord(session.language, w));
   const found = [];
   for (const item of lists.flat()) {
     const c = candidateFromName(item, idMap, { ...opts, language: session.language, isWord });
     if (!c) continue;
-    c.isRealWord = dict.has(c.letters);
+    c.isRealWord = !!dict?.has(c.letters);
     found.push(c);
   }
   return { found, proposed: lists.flat().length, error: errors[0] || null };
@@ -644,8 +840,8 @@ async function rankPass({ session, answers, candidates, model }) {
   return { ranked: ranked.flat(), error };
 }
 
-router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res) => {
-  const session = await loadSession(req);
+// A run's options from the request body, checked against the plan and the session (its language, its room)
+function acronymOptions(req, session) {
   const body = req.body || {};
   const opts = {
     minLength: intInRange(body.minLength, 3),
@@ -657,11 +853,15 @@ router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res)
   if (opts.minLength > opts.maxLength) throw new ApiError(400, 'invalid_length', 'minLength must be ≤ maxLength');
   if (![1, 2, 3].includes(opts.maxPerBranch)) throw new ApiError(400, 'invalid_per_branch', 'maxPerBranch must be 1, 2 or 3');
   const plan = usage.limitsOf(req);
+  if (opts.realWordsOnly && !dictionary.has(session.language)) throw new ApiError(422, 'real_words_language', '"Real words only" needs a word list, and this session’s language has none');
   if (opts.realWordsOnly && !plan.realWords) throw new ApiError(403, 'upgrade_required', '"Real words only" is for paid plans', { feature: 'realWords' });
   if (opts.allowChunks && !plan.chunks) throw new ApiError(403, 'upgrade_required', 'Letter chunks need an account', { feature: 'chunks' });
-  req.meter.variant = opts.realWordsOnly ? 'realWords' : opts.allowChunks ? 'chunks' : 'default';
   if (session.acronyms.length >= MAX_ACRONYMS) throw new ApiError(422, 'acronym_limit', `A session can hold at most ${MAX_ACRONYMS} acronyms`);
+  return opts;
+}
 
+// Whether the selected words can give acronyms of these lengths
+function checkSelection(session, opts) {
   const selected = session.words.filter((w) => w.selected);
   // Name-first with letter chunks: a few words can give many letters. Otherwise each word gives one (or two) letters.
   const stretch = opts.allowChunks && !opts.realWordsOnly;
@@ -673,9 +873,130 @@ router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res)
   if (!stretch && capacity < opts.minLength) {
     throw new ApiError(422, 'length_unreachable', `With these words and ${opts.maxPerBranch} word(s) per branch, acronyms can have at most ${capacity} letters`);
   }
+}
+
+// A session's background job (services/runs.js): Generate acronyms, or with body.words "Get acronyms", a fresh
+// session's first click: words for every answered branch, then acronyms from them. Answered at once (202) with the
+// job's run, which the page polls. Its phase says which part it's at: 'words', then 'acronyms'.
+router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res) => {
+  // A server on its way down (a deploy) starts no job it would have to cut: the host sends the next try elsewhere
+  if (!runs.accepting()) throw new ApiError(503, 'server_restarting', 'The server is restarting');
+  const session = await loadSession(req);
+  const withWords = req.body?.words === true;
+  const branches = withWords ? wordBranches(session, BRANCHES) : null;
+  const opts = acronymOptions(req, session);
+  const plan = usage.limitsOf(req);
+  req.meter.variant = opts.realWordsOnly ? 'realWords' : opts.allowChunks ? 'chunks' : 'default';
+  if (!withWords) checkSelection(session, opts); // with words: once they're made
   // Every acronym needs an LLM-written full name, so there is no offline mode.
-  if (!(await llm.isAvailable())) throw new llm.LLMError('llm_unavailable', 'The LLM is needed to write the acronyms’ full names');
+  if (!(await llm.isAvailable(usage.planOf(req)))) throw new llm.LLMError('llm_unavailable', 'The LLM is needed to write the acronyms’ full names');
+  // "Get acronyms" counts both now: its words are an AI action of their own, as from Generate words
+  const wordsMeter = withWords ? openMeter(req, 'words') : null;
+  const giveBackWords = withWords ? await useAi(req, res, 'words', { aiMeter: wordsMeter }) : null;
   const giveBack = await useAi(req, res, 'runs');
+
+  // One job at a time per session: two would share out the same room for words and acronyms. One whose server is
+  // gone is ended first. The claim returns the session as it is now, which the job works from: one that ended since
+  // it was read added words and acronyms not to repeat.
+  if (runs.isStale(session.run)) await runs.interrupt(session._id);
+  const startedAt = new Date();
+  const run = {
+    _id: new mongoose.Types.ObjectId(),
+    status: 'running',
+    phase: withWords ? 'words' : 'acronyms',
+    startedAt,
+    beatAt: startedAt,
+    counted: [giveBackWords?.taken, giveBack.taken].filter(Boolean),
+  };
+  const claimed = await BrainstormSession.findOneAndUpdate(
+    { _id: session._id, 'run.status': { $ne: 'running' } },
+    { $set: { run } },
+    { returnDocument: 'after', timestamps: false } // the list orders sessions by real changes: the job's results will be one
+  );
+  if (!claimed) {
+    // Started in another tab or device: the page waits for that job instead
+    const current = (await BrainstormSession.findById(session._id, { run: 1 }).lean())?.run;
+    throw new ApiError(409, 'run_in_progress', 'Acronyms are already being generated in this session', {
+      run: current ? { _id: current._id, status: current.status, phase: current.phase } : null,
+    });
+  }
+
+  // Answered now, the job goes on, its calls still metered here. A failed job is stored with the error answer its
+  // request would have had, and what it didn't deliver isn't counted.
+  req.meter.background = true;
+  res.status(202).json({ run: { _id: run._id, status: run.status, phase: run.phase } });
+  let phase = run.phase;
+  await runs.keep(session._id, run._id, async () => {
+    let status = 200;
+    try {
+      let current = claimed;
+      if (withWords) {
+        current = await wordsPhase({ req, session: claimed, branches, runId: run._id, wordsMeter, giveBackWords, giveBack });
+        phase = 'acronyms';
+        if (!current) return; // no new words: nothing to make acronyms from
+        checkSelection(current, opts);
+        req.meter.started = Date.now(); // the run's own time, after the words'
+      }
+      // startedAt: when the run reads the words, so those made later (a word's id holds its time) are new to the next
+      await acronymRun({ req, session: current, opts, plan, giveBack, runId: run._id, startedAt: new Date() });
+    } catch (err) {
+      const reply = errorReply(err);
+      status = reply.status;
+      (phase === 'words' ? wordsMeter : req.meter).error = err.code || 'server_error';
+      // Only a job still going ends here: one ended as interrupted meanwhile was given back there
+      const failed = await BrainstormSession.updateOne(
+        { _id: session._id, 'run._id': run._id, 'run.status': 'running' },
+        { $set: { 'run.status': 'failed', 'run.finishedAt': new Date(), 'run.error': reply } },
+        { timestamps: false }
+      ).catch((e) => console.error('[run]', e.message));
+      if (failed?.matchedCount) {
+        if (phase === 'words') await giveBackWords().catch((e) => console.error('[run]', e.message));
+        await giveBack().catch((e) => console.error('[run]', e.message));
+      }
+      if (phase === 'words') await wordsMeter.save(status);
+    }
+    await req.meter.save(status);
+  }, () => {
+    const m = phase === 'words' ? wordsMeter : req.meter;
+    m.error = 'run_interrupted';
+    return m.save(503);
+  });
+});
+
+// "Get acronyms" first: the words, stored with the job's move to its acronyms phase in one write. Their count is
+// earned then, so only the run's stays to give back (run.counted). Returns the session with them, or null when
+// there were none to add: the job then ends, given back.
+async function wordsPhase({ req, session, branches, runId, wordsMeter, giveBackWords, giveBack }) {
+  const { added, errors, title } = await meter.run(wordsMeter, () => branchWords({ session, branches, model: modelFor(req, session) }));
+  wordsMeter.result = { branches: branches.length, words: added.length, title: !!title };
+  const going = { _id: session._id, 'run._id': runId, 'run.status': 'running' };
+  const ended = () => new ApiError(503, 'run_interrupted', 'This run was ended before it could finish');
+  if (!added.length) {
+    const r = await BrainstormSession.updateOne(
+      going,
+      { $set: { 'run.status': 'done', 'run.phase': 'acronyms', 'run.finishedAt': new Date(), 'run.wordErrors': errors, 'run.result': { acronymIds: [], noWords: true } } },
+      { timestamps: false }
+    );
+    if (!r.matchedCount) throw ended();
+    await giveBackWords();
+    await giveBack();
+    await wordsMeter.save(200);
+    return null;
+  }
+  const updated = await BrainstormSession.findOneAndUpdate(
+    going,
+    { $push: { words: { $each: added } }, $set: { 'run.phase': 'acronyms', 'run.counted': [giveBack.taken], 'run.wordErrors': errors } },
+    { returnDocument: 'after' }
+  );
+  if (!updated) throw ended();
+  await wordsMeter.save(200);
+  return updated;
+}
+
+// A run once its request is answered: writes and scores new acronyms, then stores them with the run's result.
+// A throw is the run's error.
+async function acronymRun({ req, session, opts, plan, giveBack, runId, startedAt }) {
+  const selected = session.words.filter((w) => w.selected);
   const model = modelFor(req, session);
   const answers = session.answers.toObject ? session.answers.toObject() : session.answers;
 
@@ -734,7 +1055,7 @@ router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res)
   }
 
   // 3. Append, best first: each one's rank decides who sees it (usage.splitAcronyms)
-  const room = MAX_ACRONYMS - session.acronyms.length;
+  const room = Math.max(0, MAX_ACRONYMS - session.acronyms.length); // a run that ended since the check may have filled it
   const acronyms = usage.rankRun(candidates).slice(0, room).map((c) => ({
     _id: new mongoose.Types.ObjectId(),
     letters: c.letters,
@@ -751,22 +1072,58 @@ router.post('/sessions/:id/acronyms/generate', metered('runs'), async (req, res)
     createdAt: new Date(),
     updatedAt: new Date(),
   }));
-  if (acronyms.length) {
-    await BrainstormSession.updateOne({ _id: session._id }, { $push: { acronyms: { $each: acronyms } } });
-  } else {
-    await giveBack(); // a run that finds nothing doesn't count
-  }
 
   const { visible, locked } = usage.splitAcronyms(acronyms, usage.planOf(req));
   // scored: sent to the scoring calls; kept: stored (the rest were rejected there); locked: kept but hidden
   req.meter.result = { named: named.length, scored: Math.min(named.length, plan.rankMax ?? named.length), kept: acronyms.length, visible: visible.length, locked };
-  res.json({
-    acronyms: visible,
-    locked,
-    usage: req.usage,
-    llmError: llmError ? { error: llmError.code || 'llm_error', message: llmError.message } : null,
-    stats: { ...stats, kept: acronyms.length, ...timings },
-  });
+  // The acronyms and the run's end in one write: a page loading the session sees both or neither.
+  // A run that finds nothing still used the words, so they're no longer new (lastRunAt).
+  const stored = await BrainstormSession.updateOne(
+    { _id: session._id, 'run._id': runId, 'run.status': 'running' },
+    {
+      $set: {
+        lastRunAt: startedAt,
+        'run.status': 'done',
+        'run.finishedAt': new Date(),
+        'run.result': {
+          acronymIds: acronyms.map((a) => a._id),
+          lastRunAt: startedAt,
+          llmError: llmError ? { error: llmError.code || 'llm_error', message: llmError.message, ...llmError.extra } : null,
+          stats: { ...stats, kept: acronyms.length, ...timings },
+        },
+      },
+      ...(acronyms.length ? { $push: { acronyms: { $each: acronyms } } } : {}),
+    }
+  );
+  // Ended meanwhile, as interrupted (its server was taken for gone, or is stopping): it was given back there
+  if (!stored.matchedCount) throw new ApiError(503, 'run_interrupted', 'This run was ended before it could finish');
+  if (!acronyms.length) await giveBack(); // a run that finds nothing doesn't count
+}
+
+// A job, which the page asks about every few seconds: { status: 'running', phase } while it goes on, then what its
+// request would have answered: { status: 'done', acronyms (those this viewer may see), … }, or its error.
+// wordErrors: the branches "Get acronyms" couldn't make words for; noWords: it made none, so no acronyms either.
+router.get('/sessions/:id/acronyms/runs/:runId', async (req, res) => {
+  if (!isId(req.params.id) || !isId(req.params.runId)) throw new ApiError(404, 'run_not_found', 'Run not found');
+  // Just the run: the acronyms are read once it's done
+  const read = () => BrainstormSession.findOne(owned(req, { _id: req.params.id, 'run._id': req.params.runId }), { run: 1 }).lean();
+  let found = await read();
+  // Its server is gone: ended here, so the page stops waiting
+  if (runs.isStale(found?.run)) {
+    await runs.interrupt(found._id);
+    found = await read();
+  }
+  const run = found?.run;
+  if (!run) throw new ApiError(404, 'run_not_found', 'Run not found');
+  if (run.status === 'running') return res.json({ status: 'running', phase: run.phase || 'acronyms', wordErrors: run.wordErrors });
+  if (run.status === 'interrupted') throw new ApiError(503, 'run_interrupted', 'This run was cut off by a server restart');
+  if (run.status === 'failed') return res.status(run.error.status).json(run.error.body);
+
+  const ids = new Set(run.result.acronymIds.map(String));
+  const session = await BrainstormSession.findById(found._id, { acronyms: 1 }).lean();
+  const { visible, locked } = usage.splitAcronyms((session?.acronyms || []).filter((a) => ids.has(String(a._id))), usage.planOf(req));
+  const { lastRunAt, llmError, stats, noWords } = run.result;
+  res.json({ status: 'done', acronyms: visible, locked, lastRunAt, usage: await usage.view(req), llmError, stats, noWords: !!noWords, wordErrors: run.wordErrors });
 });
 
 router.patch('/sessions/:id/acronyms/:acronymId', async (req, res) => {
@@ -821,22 +1178,21 @@ router.use((req, res) => {
 // eslint-disable-next-line no-unused-vars
 router.use((err, req, res, next) => {
   if (req.meter) req.meter.error = err.code || 'server_error';
-  if (err instanceof ApiError || err instanceof llm.LLMError) {
-    return res.status(err.status).json({ error: err.code, message: err.message, ...err.extra });
-  }
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'invalid_json', message: 'Request body is not valid JSON' });
   }
   if (err.name === 'ValidationError' || err.name === 'CastError') {
     return res.status(400).json({ error: 'validation_error', message: err.message });
   }
-  console.error('[api]', err);
-  res.status(500).json({ error: 'server_error', message: 'Unexpected server error' });
+  const { status, body } = errorReply(err);
+  res.status(status).json(body);
 });
 
 router.routes = [
+  { method: 'GET', path: '/ready', label: 'Ready for traffic (host health check)' },
   { method: 'GET', path: '/health', label: 'DB + LLM health' },
   { method: 'GET', path: '/models', label: 'List LLM models' },
+  { method: 'GET', path: '/usage', label: 'AI limits and this window’s counts' },
   { method: 'GET', path: '/sessions', label: 'List sessions' },
   { method: 'POST', path: '/sessions', label: 'Create session' },
   { method: 'GET', path: '/sessions/:id', label: 'Get session' },
@@ -846,13 +1202,21 @@ router.routes = [
   { method: 'GET', path: '/guest-sessions', label: 'Guest sessions left in this browser (signed in)' },
   { method: 'POST', path: '/guest-sessions/move', label: 'Move guest sessions to the account' },
   { method: 'DELETE', path: '/guest-sessions', label: 'Delete guest sessions' },
+  { method: 'PATCH', path: '/account', label: 'Change my name' },
+  { method: 'POST', path: '/account/email', label: 'Change my email address (password; confirmed by a link)' },
+  { method: 'DELETE', path: '/account/email', label: 'Cancel a pending email change' },
+  { method: 'POST', path: '/account/password', label: 'Change my password (current password)' },
+  { method: 'GET', path: '/account/transactions', label: 'My payments, newest first (transaction history)' },
+  { method: 'GET', path: '/account/export', label: 'Download my data (JSON file)' },
+  { method: 'DELETE', path: '/account', label: 'Delete my account and its sessions (password)' },
   { method: 'POST', path: '/sessions/:id/expand', label: 'LLM words for branches' },
   { method: 'POST', path: '/sessions/:id/words', label: 'Add manual word' },
   { method: 'PATCH', path: '/sessions/:id/words/:wordId', label: 'Rename / (de)select word' },
   { method: 'POST', path: '/sessions/:id/words/bulk-select', label: 'Bulk (de)select words' },
   { method: 'DELETE', path: '/sessions/:id/words/:wordId', label: 'Delete word + descendants' },
   { method: 'POST', path: '/sessions/:id/words/:wordId/expand', label: 'LLM child words' },
-  { method: 'POST', path: '/sessions/:id/acronyms/generate', label: 'Generate acronyms' },
+  { method: 'POST', path: '/sessions/:id/acronyms/generate', label: 'Start an acronym run' },
+  { method: 'GET', path: '/sessions/:id/acronyms/runs/:runId', label: 'Acronym run status and result' },
   { method: 'PATCH', path: '/sessions/:id/acronyms/:acronymId', label: 'Toggle favorite' },
   { method: 'DELETE', path: '/sessions/:id/acronyms/:acronymId', label: 'Delete acronym' },
   { method: 'POST', path: '/sessions/:id/acronyms/clear', label: 'Clear non-favorites' },

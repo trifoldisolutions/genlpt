@@ -1,8 +1,15 @@
-// Assumptions behind the usage report's estimates (npm run usage:report): how much people use the app, and what
-// a paid plan's price has to cover. The costs themselves are measured; edit these freely, each report re-reads them.
+// What each plan costs (shown in Settings → Billing), then the assumptions behind the usage report's estimates
+// (npm run usage:report): how much people use the app, and what a paid plan's price has to cover. The costs
+// themselves are measured; edit these freely, each report re-reads them.
 const { USAGE_WINDOW_HOURS } = require('./limits');
 
 module.exports = {
+  // null: free. Provisional until the usage report's "Paid plan price" can be worked out (every plan tested).
+  PLAN_PRICES: {
+    guest: null,
+    free: null,
+    paid: { amount: 9, currency: 'USD', interval: 'month' },
+  },
   // A typical usage window uses this share of each of the plan's limits; a full one uses all of them.
   TYPICAL_WINDOW_SHARE: 0.4,
   // Reformulations are limited per session, not per window: a full window is assumed to use them in this many sessions.

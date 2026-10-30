@@ -48,6 +48,12 @@ function guestOwner(req) {
   return value ? guestKey(value) : null;
 }
 
+// When this browser's guest began (the start time its cookie carries), or null without one
+function guestStartedAt(req) {
+  const value = readGuest(req);
+  return value ? new Date(Number(value.split('.')[1])) : null;
+}
+
 // Forget this browser's guest (live, expired or malformed); its sessions, if any are left, expire on schedule
 function clearGuest(req, res) {
   if (readCookie(req, GUEST_COOKIE) !== null) res.clearCookie(GUEST_COOKIE, cookieOptions());
@@ -81,4 +87,4 @@ function ensureOwner(req, res, next) {
   next();
 }
 
-module.exports = { resolveOwner, ensureOwner, guestOwner, clearGuest, keepGuest, GUEST_COOKIE, GUEST_TTL_MS };
+module.exports = { resolveOwner, ensureOwner, guestOwner, guestStartedAt, clearGuest, keepGuest, GUEST_COOKIE, GUEST_TTL_MS };

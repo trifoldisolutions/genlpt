@@ -38,12 +38,28 @@ const CONNECTORS = {
     'a', 'an', 'the', 'of', 'and', 'or', 'nor', 'for', 'to', 'in', 'on', 'at', 'by',
     'with', 'from', 'into', 'onto', 'upon', 'per', 'as',
   ]),
+  // "y"/"o" become "e"/"u" before an i-/o- sound ("Ciencia e Innovación"); "del" and "al" are de/a + el
+  es: new Set([
+    'el', 'la', 'los', 'las', 'lo', 'un', 'una', 'unos', 'unas', 'del', 'al',
+    'a', 'ante', 'con', 'contra', 'de', 'desde', 'durante', 'en', 'entre', 'hacia', 'hasta', 'mediante',
+    'para', 'por', 'según', 'sin', 'sobre', 'tras', 'como',
+    'y', 'e', 'o', 'u', 'ni', 'que', 'quien', 'donde',
+  ]),
+  // The definite article follows its noun ("lekòl la", "machin nan"); yo marks the plural. Left out on purpose,
+  // as they are also nouns: men (hand), san (blood), kont (story), pa (step), kote (place), lakay (home).
+  ht: new Set([
+    'la', 'a', 'an', 'lan', 'nan', 'yo', 'yon', 'on',
+    'pou', 'sou', 'ak', 'avèk', 'avè', 'de', 'anba', 'ant', 'pandan', 'depi', 'jiska', 'pami', 'selon', 'apre', 'anvan', 'kòm',
+    'e', 'epi', 'oswa', 'ou', 'ni', 'ki', 'ke',
+  ]),
 };
 
 // Coordinators only join items of a list: "A, B et C" is an enumeration, not a name.
 const COORDINATORS = {
   fr: new Set(['et', 'ou', 'où', 'ni']),
   en: new Set(['and', 'or', 'nor']),
+  es: new Set(['y', 'e', 'o', 'u', 'ni']),
+  ht: new Set(['ak', 'e', 'epi', 'oswa', 'ou', 'ni']),
 };
 
 const FR_ELISION = /^((?:jusqu|lorsqu|puisqu|qu|[ldsncjmt])['’])(.+)$/i;

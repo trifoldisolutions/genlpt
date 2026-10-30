@@ -16,13 +16,17 @@ const { clearGuest } = require('../middleware/owner');
 const { tooMany, mailAllowed, tooManyMessage } = require('../middleware/rateLimit');
 const { sendEmail, link } = require('../services/email');
 const emails = require('../services/email/templates');
+const account = require('../services/account');
+const { turnstileSiteKey, checkTurnstile } = require('../services/turnstile');
 const { PASSWORD_MAX_CHARS, VERIFY_LINK_HOURS, RESET_LINK_HOURS, UNVERIFIED_DAYS } = require('../config/limits');
 
 const router = express.Router();
 
-// The single-page brainstorm tool; session id travels in ?s=<id>
-router.get('/', (req, res) => {
-  res.render('app/index', { shell: 'app' });
+// The single-page brainstorm tool; session id travels in ?s=<id>. pendingEmail: an email change waiting for its
+// link, for settings → Account.
+router.get('/', async (req, res) => {
+  const pendingEmail = req.user ? await account.pendingEmail(req.user._id).catch(() => null) : null;
+  res.render('app/index', { shell: 'app', pendingEmail });
 });
 
 // ---------------------------------------------------------------------------
@@ -42,9 +46,15 @@ const TITLES = {
   forgot: 'Reset your password',
   'forgot-sent': 'Check your inbox',
   reset: 'Choose a new password',
+  'confirm-email': 'Confirm your new email address',
 };
 const UNAVAILABLE = 'Accounts are unavailable right now. Please try again in a moment, or continue as a guest.';
 const WRONG_LOGIN = 'Wrong email or password.';
+// Signup's bot check (services/turnstile.js), by its result
+const NOT_CHECKED = {
+  missing: "The security check didn't finish. Please try again in a moment. If this keeps happening, a browser extension may be blocking it.",
+  failed: "The security check didn't go through. Please try again.",
+};
 
 // Every account page shares one layout (views/app/auth.ejs); `screen` picks its form column (views/app/auth/)
 function render(res, screen, locals = {}, status = 200) {
@@ -56,6 +66,7 @@ function render(res, screen, locals = {}, status = 200) {
     error: '',
     notice: '',
     values: {},
+    turnstileSiteKey: turnstileSiteKey(), // signup's bot check; null when it's off
     ...locals,
   });
 }
@@ -80,7 +91,7 @@ const later = (label, promise) => promise.catch((err) => console.error(`[${label
 async function emailSignup(email, unconfirmed, next) {
   if (!(await mailAllowed(email))) return;
   if (unconfirmed) {
-    const token = await AuthToken.issue(unconfirmed._id, 'verify', VERIFY_LINK_HOURS, next);
+    const token = await AuthToken.issue(unconfirmed._id, 'verify', VERIFY_LINK_HOURS, { next });
     await sendEmail({ to: email, ...emails.verifyEmail({ url: link(`/app/verify?token=${token}`) }) });
     return;
   }
@@ -141,6 +152,9 @@ router.post('/signup', sameOrigin, needAccounts('signup'), async (req, res) => {
   if (problem) return render(res, 'signup', { next, values, error: problem }, 400);
   const wait = await tooMany(['signupIp', req.ip]);
   if (wait) return renderTooMany(res, 'signup', wait, { next, values });
+  const check = await checkTurnstile(body['cf-turnstile-response'], req.ip);
+  if (check === 'unavailable') return render(res, 'signup', { next, values, error: UNAVAILABLE }, 503);
+  if (check !== 'ok') return render(res, 'signup', { next, values, error: NOT_CHECKED[check] }, 400);
 
   const passwordHash = await User.hashPassword(password); // hashed even for a taken email: same time either way
   const unconfirmed = await registerUnconfirmed(values, passwordHash);
@@ -231,6 +245,50 @@ router.post('/reset', sameOrigin, needAccounts(), async (req, res) => {
   res.redirect('/app');
 });
 
+// The link sent to a new email address (settings → Account, routes/api.js). Like /verify, only the button confirms.
+// It works only while logged in to the account that asked, so whoever owns a mistyped address can't take the account
+// over by using it: logged out, the page asks to log in first, and the login comes back here.
+async function emailChangeLink(req, res, token) {
+  const record = await AuthToken.peek(token, 'email');
+  if (!record) {
+    render(res, 'link-expired', { kind: 'email' }, 410);
+    return null;
+  }
+  const values = { email: record.email };
+  if (!req.user) {
+    render(res, 'confirm-email', { step: 'login', values, next: `/app/confirm-email?token=${encodeURIComponent(token)}` });
+    return null;
+  }
+  if (String(req.user._id) !== String(record.userId)) {
+    render(res, 'confirm-email', { step: 'other', title: 'This link is for another account' }, 403);
+    return null;
+  }
+  return record;
+}
+
+router.get('/confirm-email', needAccounts(), async (req, res) => {
+  const token = String(req.query.token || '');
+  const record = await emailChangeLink(req, res, token);
+  if (record) render(res, 'confirm-email', { step: 'confirm', token, values: { email: record.email } });
+});
+
+// The previous address gets a notice once the change is done
+router.post('/confirm-email', sameOrigin, needAccounts(), async (req, res) => {
+  const token = String((req.body || {}).token || '');
+  if (!(await emailChangeLink(req, res, token))) return;
+  const record = await AuthToken.consume(token, 'email');
+  if (!record) return render(res, 'link-expired', { kind: 'email' }, 410);
+  const values = { email: record.email };
+  if (!(await account.applyEmailChange(req.user._id, record.email))) {
+    return render(res, 'confirm-email', { step: 'taken', title: 'This email address is already in use', values }, 409);
+  }
+  const previous = req.user.email;
+  later('email changed email', (async () => {
+    if (await mailAllowed(previous)) await sendEmail({ to: previous, ...emails.emailChanged() });
+  })());
+  render(res, 'confirm-email', { step: 'done', title: 'Your email address has been changed', values });
+});
+
 // Forgets the guest too, so the next person on this browser starts fresh
 router.post('/logout', sameOrigin, async (req, res) => {
   await signOut(req, res);
@@ -251,6 +309,8 @@ router.routes = [
   { method: 'POST', path: '/forgot', label: 'Send a reset link' },
   { method: 'GET', path: '/reset', label: 'Choose a new password (link from the email)' },
   { method: 'POST', path: '/reset', label: 'Save the new password' },
+  { method: 'GET', path: '/confirm-email', label: 'Confirm a new email address (link from the email)' },
+  { method: 'POST', path: '/confirm-email', label: 'Confirm a new email address (button)' },
   { method: 'POST', path: '/logout', label: 'Log out' },
 ];
 

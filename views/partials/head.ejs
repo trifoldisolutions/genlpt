@@ -9,11 +9,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=SUSE:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/output.css">
+  <script src="/js/theme.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2/dist/iconify-icon.min.js"></script>
 </head>
-<body class="<%= isApp ? 'h-dvh overflow-hidden' : 'min-h-dvh' %> bg-zinc-50 font-sans text-zinc-900 antialiased" data-app-name="<%= appName %>" data-answer-min="<%= limits.ANSWER_MIN_CHARS %>" data-answer-max="<%= limits.ANSWER_MAX_CHARS %>">
+<body class="<%= isApp ? 'h-dvh overflow-hidden' : 'min-h-dvh' %> bg-zinc-50 font-sans text-zinc-900 antialiased" data-app-name="<%= appName %>" data-answer-min="<%= limits.ANSWER_MIN_CHARS %>" data-answer-max="<%= limits.ANSWER_MAX_CHARS %>" data-expand-depth="<%= limits.EXPAND_DEPTH %>"data-guest-hours="<%= limits.GUEST_HOURS %>" data-usage-hours="<%= limits.USAGE_WINDOW_HOURS %>">
 <% if (!bare) { %>
-  <header class="border-b border-zinc-200 bg-white">
+  <header class="border-b border-zinc-200 bg-surface">
     <nav class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
       <a href="/" class="font-bold tracking-tight"><%= appName %></a>
       <div class="flex gap-4 text-sm text-zinc-600">

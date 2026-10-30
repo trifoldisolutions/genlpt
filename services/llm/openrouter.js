@@ -6,7 +6,11 @@ const { MODELS } = require('../../config/models');
 
 const baseUrl = () => (process.env.OPENROUTER_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 const timeoutMs = () => Number(process.env.LLM_TIMEOUT_MS) || 180000;
-const apiKey = () => (process.env.OPENROUTER_API_KEY || '').trim();
+// A key per plan, named after its OpenRouter key (genlpt-guest → OPENROUTER_GENLPT_GUEST, then _FREE, _PAID), so
+// OpenRouter shows each plan's spend and caps it with that key's credit limit. A plan without its own key yet, and a
+// call made for no plan (scripts), use the guest key.
+const keyName = (plan) => `OPENROUTER_GENLPT_${String(plan || 'guest').toUpperCase()}`;
+const apiKey = (plan) => (process.env[keyName(plan)] || process.env[keyName('guest')] || '').trim();
 // Output cap per call. Without one, OpenRouter checks credits against the model's maximum (often 65k tokens)
 // and refuses calls on a small balance. Answers here are short; reasoning models also spend from this budget.
 const maxTokens = () => Number(process.env.OPENROUTER_MAX_TOKENS) || 4096;
@@ -31,13 +35,20 @@ function retryDelay(res, attempt) {
   return Math.min(Math.max(header, retryBase() * 2 ** attempt), 30000) + Math.random() * retryBase() / 4;
 }
 
-// opts.waits: { rateLimitRetries, waitMs }, counted up while rate limits are waited out.
-// opts.retries: how many 429s to wait out (RETRIES by default). A failed answer's error carries its upstreamStatus.
+// Which budget refused a call (OpenRouter's error.metadata.limit_source): openrouter_key_limit (the key's credit
+// limit), openrouter_credits (the account's balance), openrouter_in_flight_budget (calls still settling: wait and
+// retry), or a guardrail's. A key's spent limit comes as a 402 or a 403 (the docs say both), so the source decides.
+const limitSource = (data) => data?.error?.metadata?.limit_source || null;
+
+// opts.plan: whose key to use (apiKey). opts.waits: { rateLimitRetries, waitMs }, counted up while rate limits are waited out.
+// opts.retries: how many 429s (and in-flight budget 402s) to wait out (RETRIES by default). A failed answer's error
+// carries its upstreamStatus.
 async function request(pathname, opts = {}) {
   const retries = opts.retries ?? RETRIES;
   for (let attempt = 0; ; attempt++) {
     const { res, data, text } = await send(pathname, opts);
-    if (res.status === 429 && attempt < retries) {
+    const settling = res.status === 402 && limitSource(data) === 'openrouter_in_flight_budget';
+    if ((res.status === 429 || settling) && attempt < retries) {
       const delay = retryDelay(res, attempt);
       if (opts.waits) {
         opts.waits.rateLimitRetries++;
@@ -47,18 +58,27 @@ async function request(pathname, opts = {}) {
       continue;
     }
     if (!res.ok || data?.error) {
-      const msg = data?.error?.message || text;
-      // 401 bad key, 402 no credits: nothing will work until the account is fixed
-      const code = res.status === 401 || res.status === 402 ? 'llm_unavailable' : 'llm_error';
-      throw Object.assign(new LLMError(code, `OpenRouter ${res.status}: ${String(msg).slice(0, 300)}`), { upstreamStatus: res.status });
+      const msg = `OpenRouter ${res.status}${limitSource(data) ? ` (${limitSource(data)})` : ''}: ${String(data?.error?.message || text).slice(0, 300)}`;
+      // A spent budget (402, or a 403 that names its budget): the plan's AI is paused until it resets or is raised.
+      // Users see the paused message; the reason stays here, for the server log (services/llm/index.js).
+      if (res.status === 402 || (res.status === 403 && limitSource(data))) {
+        throw Object.assign(new LLMError('ai_paused', msg, { plan: opts.plan || null, resetAt: null }), { upstreamStatus: res.status });
+      }
+      // 401: a bad or revoked key; nothing will work until .env is fixed
+      throw Object.assign(new LLMError(res.status === 401 ? 'llm_unavailable' : 'llm_error', msg), { upstreamStatus: res.status });
     }
     if (!data) throw new LLMError('llm_error', 'OpenRouter returned a non-JSON response');
     return data;
   }
 }
 
-async function send(pathname, { method = 'GET', body, timeout = timeoutMs() } = {}) {
-  if (!apiKey()) throw new LLMError('llm_unavailable', 'OPENROUTER_API_KEY is not set in .env');
+async function send(pathname, { method = 'GET', body, timeout = timeoutMs(), plan = null } = {}) {
+  const key = apiKey(plan);
+  if (!key) {
+    const own = keyName(plan);
+    const guest = keyName('guest');
+    throw new LLMError('llm_unavailable', own === guest ? `${guest} is not set in .env` : `Neither ${own} nor ${guest} is set in .env`);
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   let res;
@@ -67,7 +87,7 @@ async function send(pathname, { method = 'GET', body, timeout = timeoutMs() } = 
     res = await fetch(baseUrl() + pathname, {
       method,
       headers: {
-        Authorization: `Bearer ${apiKey()}`,
+        Authorization: `Bearer ${key}`,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         'X-Title': appName, // shows the app in the OpenRouter activity log
       },
@@ -87,11 +107,11 @@ async function send(pathname, { method = 'GET', body, timeout = timeoutMs() } = 
   return { res, data, text };
 }
 
-// Checks the key, not just the network. One try: a health check doesn't wait out a rate limit, and a 429
+// Checks the plan's key, not just the network. One try: a health check doesn't wait out a rate limit, and a 429
 // still means the key works (calls wait their turn).
-async function ping() {
+async function ping(plan = null) {
   try {
-    await request('/key', { timeout: 5000, retries: 0 });
+    await request('/key', { timeout: 5000, retries: 0, plan });
   } catch (err) {
     if (err.upstreamStatus !== 429) throw err;
   }
@@ -111,8 +131,8 @@ function usageOf(u = {}) {
 }
 
 // Returns the raw assistant text and what the call used (see index.js). A failed call carries its rate-limit
-// waits as err.usage.
-async function chat({ model, messages, temperature = 0.7 }) {
+// waits as err.usage. plan: whose key pays for it.
+async function chat({ model, messages, temperature = 0.7, plan = null }) {
   const waits = { rateLimitRetries: 0, waitMs: 0 };
   const effort = reasoningOf(model);
   let data;
@@ -129,6 +149,7 @@ async function chat({ model, messages, temperature = 0.7 }) {
         ...(effort ? { reasoning: { effort } } : {}),
       },
       waits,
+      plan,
     });
   } catch (err) {
     err.usage = waits;

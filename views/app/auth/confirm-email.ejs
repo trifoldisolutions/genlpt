@@ -1,0 +1,45 @@
+<%#
+  Behind the link sent to a new email address (routes/app.js /confirm-email), by step: confirm (the button does it, as
+  mail scanners open links), login (it only works while logged in to the account that asked), other (logged in to
+  another account), taken (the address got an account meanwhile), done.
+%>
+<% if (step === 'login') { %>
+<h1 class="text-2xl font-bold tracking-tight">Confirm your new email address</h1>
+<p class="mt-2 text-base text-zinc-600">To make <span class="font-medium text-zinc-900"><%= values.email %></span> your new email address, please log in to your <%= appName %> account first. You'll come back here to confirm it.</p>
+<a href="/app/login?next=<%= encodeURIComponent(next) %>" class="btn-primary mt-6 w-full">
+  <span>Log in</span>
+</a>
+
+<% } else if (step === 'other') { %>
+<h1 class="text-2xl font-bold tracking-tight">This link is for another account</h1>
+<p class="mt-2 text-base text-zinc-600">You're logged in to a different <%= appName %> account than the one that asked for this change. To confirm it, log out, log in to that account, then open the link again.</p>
+<a href="/app" class="btn-primary mt-6 w-full">
+  <span>Back to <%= appName %></span>
+</a>
+
+<% } else if (step === 'taken') { %>
+<h1 class="text-2xl font-bold tracking-tight">This email address is already in use</h1>
+<p class="mt-2 text-base text-zinc-600"><span class="font-medium text-zinc-900"><%= values.email %></span> now belongs to another <%= appName %> account, so it can't become this account's email address. Your email address has not been changed.</p>
+<a href="/app" class="btn-primary mt-6 w-full">
+  <span>Back to <%= appName %></span>
+</a>
+
+<% } else if (step === 'done') { %>
+<h1 class="text-2xl font-bold tracking-tight">Your email address has been changed</h1>
+<p class="mt-2 text-base text-zinc-600">From now on, log in with <span class="font-medium text-zinc-900"><%= values.email %></span>. We've let your previous address know about the change.</p>
+<a href="/app" class="btn-primary mt-6 w-full">
+  <span>Continue to <%= appName %></span>
+</a>
+
+<% } else { %>
+<h1 class="text-2xl font-bold tracking-tight">Confirm your new email address</h1>
+<p class="mt-2 text-base text-zinc-600">Confirm that <span class="font-medium text-zinc-900"><%= values.email %></span> is the new email address of your <%= appName %> account. Once it's confirmed, you'll log in with it.</p>
+
+<form method="post" action="/app/confirm-email" data-busy class="mt-6">
+  <input type="hidden" name="token" value="<%= token %>">
+  <button type="submit" class="btn-primary w-full">
+    <iconify-icon icon="boxicons:check-circle" width="20" height="20" aria-hidden="true"></iconify-icon>
+    <span>Confirm new email address</span>
+  </button>
+</form>
+<% } %>

@@ -5,6 +5,10 @@ const ANSWER_MAX_CHARS = 500;
 
 const answerLength = (value) => String(value || '').replace(/\s/g, '').length;
 
+// How many layers "Expand" can add under a branch's own words (shared with the client like the answer limits).
+// With 2: Network → Grid → Cells, and Cells can't be expanded. Each layer drifts further from the project.
+const EXPAND_DEPTH = 2;
+
 // A guest (no account) is erased after this long without activity (any request on their sessions pushes it
 // back); their next session then starts a new guest.
 const GUEST_HOURS = 3;
@@ -29,11 +33,23 @@ const PLAN_LIMITS = {
 // Guests are also counted per IP: clearing cookies makes a new guest, not new runs. Room for a few people on one IP.
 const GUEST_IP_LIMITS = { runs: 6, words: 12, expansions: 30 };
 
+// What the whole platform may spend on AI in a day (USD, every plan together; days run midnight to midnight UTC).
+// Past a plan's pause line its AI actions are refused until the next day: guests first, then free accounts. Paid
+// accounts are never paused here (their own OpenRouter key's credit limit caps them). The first time a day's spend
+// crosses the warning or a pause line, an email goes to ALERT_EMAIL (or, without it, every admin).
+const DAILY_SPEND = {
+  warning: 30,
+  pause: { guest: 40, free: 50 },
+};
+
 // A signed-in user stays logged in this long after their last visit.
 const LOGIN_DAYS = 30;
 
-// Passwords: the max only keeps hashing cheap (argon2 takes any length).
-const PASSWORD_MIN_CHARS = 8;
+// New passwords (signup, reset): at least PASSWORD_MIN_EACH of each kind of character, so 12 characters at least
+// (the kinds don't overlap). public/js/password.js counts them, for the page and the server alike; symbol:
+// punctuation and symbols, not spaces. Existing passwords keep working: logging in checks only the max. The max
+// only keeps hashing cheap (argon2 takes any length).
+const PASSWORD_MIN_EACH = { lower: 3, upper: 3, digit: 3, symbol: 3 };
 const PASSWORD_MAX_CHARS = 200;
 
 // Links in account emails: how long each stays valid (each works once, and a newer one replaces it).
@@ -58,12 +74,14 @@ module.exports = {
   ANSWER_MIN_CHARS,
   ANSWER_MAX_CHARS,
   answerLength,
+  EXPAND_DEPTH,
   GUEST_HOURS,
   USAGE_WINDOW_HOURS,
   PLAN_LIMITS,
   GUEST_IP_LIMITS,
+  DAILY_SPEND,
   LOGIN_DAYS,
-  PASSWORD_MIN_CHARS,
+  PASSWORD_MIN_EACH,
   PASSWORD_MAX_CHARS,
   VERIFY_LINK_HOURS,
   RESET_LINK_HOURS,

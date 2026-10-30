@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const Usage = require('../models/Usage');
 const { USAGE_WINDOW_HOURS, PLAN_LIMITS, GUEST_IP_LIMITS } = require('../config/limits');
+const { PLAN_PRICES } = require('../config/pricing');
+const { guestStartedAt } = require('../middleware/owner');
 
 // AI usage limits (PLAN_LIMITS in config/limits.js). Each subject — the session owner, plus the IP for a
 // guest — has a window that opens on its first AI action and resets USAGE_WINDOW_HOURS later. An action
@@ -109,6 +111,24 @@ async function take(req, kind, sessionId = null) {
   return { ok: true, taken, path, view: toView(planOf(req), taken[0]) };
 }
 
+// The plan as Settings → Billing shows it: its price (null: free), when it began, and when its period ends.
+//   guest  began with their first session (the guest cookie's start); the page knows when their sessions go
+//   free   began with the account, and has no end
+//   paid   the subscription's dates, from the payment provider; renews: false once it's canceled
+function planDetails(req) {
+  const plan = planOf(req);
+  const base = { plan, price: PLAN_PRICES[plan] || null, startedAt: null, periodEnd: null, renews: false };
+  if (plan === 'guest') return { ...base, startedAt: guestStartedAt(req) };
+  if (plan === 'free') return { ...base, startedAt: req.user.createdAt || null };
+  const sub = req.user.subscription || {};
+  return {
+    ...base,
+    startedAt: sub.startedAt || null,
+    periodEnd: sub.currentPeriodEnd || null,
+    renews: !!sub.currentPeriodEnd && !sub.cancelAtPeriodEnd && sub.status !== 'canceled',
+  };
+}
+
 // Each acronym of a run gets its place in it, best first: score (unscored last), then the engine's score,
 // the same order as the list's "Score" sort.
 function rankRun(candidates) {
@@ -126,4 +146,4 @@ function splitAcronyms(acronyms, plan) {
   return { visible, locked: acronyms.length - visible.length };
 }
 
-module.exports = { planOf, limitsOf, take, giveBack, view, toView, rankRun, splitAcronyms, KINDS };
+module.exports = { planOf, limitsOf, planDetails, take, giveBack, view, toView, rankRun, splitAcronyms, KINDS };

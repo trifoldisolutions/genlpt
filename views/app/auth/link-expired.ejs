@@ -1,7 +1,12 @@
-<%# A confirmation or reset link that expired, was already used, or was replaced by a newer one %>
+<%# A confirmation, reset or new-email link that expired, was already used, or was replaced by a newer one (or canceled) %>
 <h1 class="text-2xl font-bold tracking-tight">This link is no longer valid</h1>
 <p class="mt-2 text-base text-zinc-600">The link has expired or has already been used. For your security, each link works only once and for a limited time.</p>
-<% if (locals.kind === 'reset') { %>
+<% if (locals.kind === 'email') { %>
+<p class="mt-3 text-base text-zinc-600">To get a new link, change your email address again from the Account tab of your settings.</p>
+<a href="/app" class="btn-primary mt-6 w-full">
+  <span>Back to <%= appName %></span>
+</a>
+<% } else if (locals.kind === 'reset') { %>
 <p class="mt-3 text-base text-zinc-600">You can request a new link to reset your password.</p>
 <a href="/app/forgot" class="btn-primary mt-6 w-full">
   <iconify-icon icon="boxicons:envelope" width="20" height="20" aria-hidden="true"></iconify-icon>

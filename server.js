@@ -10,6 +10,8 @@ const limits = require('./config/limits');
 const { sessions, loadUser } = require('./middleware/auth');
 const { securityHeaders } = require('./middleware/headers');
 const { requestLog } = require('./middleware/requestLog');
+const { turnstileSiteKey } = require('./services/turnstile');
+const runs = require('./services/runs');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -26,6 +28,7 @@ else if (TRUST_PROXY) console.warn(`TRUST_PROXY must be how many proxies sit in 
 if (process.env.NODE_ENV === 'production') {
   if (!TRUST_PROXY) console.warn('TRUST_PROXY is not set: behind an HTTPS proxy, logins will silently fail.');
   if (!APP_URL) console.warn('APP_URL is not set: links in account emails will point to localhost.');
+  if (!turnstileSiteKey()) console.warn('TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are not both set: signups have no bot check, only rate limits.');
 }
 
 app.set('view engine', 'ejs');
@@ -86,7 +89,7 @@ if (process.env.MONGO_URI) {
   console.warn('MONGO_URI is not set — database features are disabled.');
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const base = `http://localhost:${PORT}`;
   console.log(`\nServer running at ${base}\n`);
   facades.forEach(({ name, mount, router }) => {
@@ -97,4 +100,16 @@ app.listen(PORT, () => {
     });
   });
   console.log('');
+});
+
+// Hosts send SIGTERM before stopping the server, on each deploy: acronym runs going on get SHUTDOWN_GRACE_MS to
+// end, and the rest are ended as interrupted and not counted (services/runs.js). Keep it under the host's own
+// grace period, after which it kills the server anyway.
+process.on('SIGTERM', async () => {
+  const graceMs = Number(process.env.SHUTDOWN_GRACE_MS) || 25000;
+  console.log(`SIGTERM: stopping once acronym runs end (at most ${graceMs / 1000} s)`);
+  server.close();
+  await runs.shutdown(graceMs);
+  await mongoose.disconnect().catch(() => {});
+  process.exit(0);
 });

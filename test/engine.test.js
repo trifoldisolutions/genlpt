@@ -17,6 +17,11 @@ test('initials skip leading connectors; a connector never gives the letter', () 
   assert.equal(initials("L'Équipe").one, 'E');
   assert.equal(initials('La Tribu').one, 'T');
   assert.equal(initials('The Hub', 'en').one, 'H');
+  assert.equal(initials('Del Sur', 'es').one, 'S');
+  assert.equal(initials('Para', 'es').one, null);
+  assert.equal(initials('Niño', 'es').two, 'NI');
+  assert.equal(initials('Nan Lekòl', 'ht').one, 'L');
+  assert.equal(initials('Pou', 'ht').one, null);
   assert.equal(initials('Pour', 'fr').one, null);
   assert.equal(initials('Pour', 'en').one, 'P'); // an English verb, not a connector
   assert.equal(initials('Sûr').one, 'S'); // "sûr" is not "sur"

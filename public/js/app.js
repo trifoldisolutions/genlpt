@@ -1,6 +1,8 @@
 // Single-page brainstorm client (vanilla JS).
 import { BRANCHES, COLORS, t, errorText, applyStatic } from './i18n.js';
-import { createGraph } from './graph.js';
+import { createGraph, LAYOUTS } from './graph.js';
+import { customSelect } from './select.js';
+import { sessionTabs } from './tabs.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -10,13 +12,15 @@ const state = {
   sessions: [],
   sessionQuery: '', // sidebar search box
   session: null,
+  elsewhere: false, // the open session is in another tab of this browser (public/js/tabs.js)
   busy: new Set(), // 'words', 'branch:who', 'word:<id>', 'acronyms', 'acronymDomains' (a run's domain checks)
-  langHint: false,
   sort: 'score',
   filter: 'all',
   panel: null, // { kind: 'word' | 'branch', id, mode }
   step: 'describe', // 'describe' | 'explore' | 'acronyms'
   usage: null, // the plan's AI limits and this window's counts (services/usage.js toView)
+  planInfo: null, // the plan's price and dates, for Settings → Billing (services/usage.js planDetails)
+  transactions: null, // an account's payments for Settings → Billing: { transactions, more }, or { error: true }; null until fetched
   newAcronyms: new Set(), // ids from the last run, tagged "New" until the next run or leaving the session
 };
 
@@ -72,10 +76,15 @@ function toast(message, kind = 'error', ms = kind === 'error' ? 7000 : 3500) {
   };
   const k = kinds[kind];
   const el = h('div', {
-    class: `pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border border-l-4 border-zinc-200 bg-white px-3 py-2.5 text-base text-zinc-800 shadow-lg ${k.accent}`,
+    class: `pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border border-l-4 border-zinc-200 bg-surface px-3 py-2.5 text-base text-zinc-800 shadow-lg ${k.accent}`,
     role: kind === 'error' ? 'alert' : 'status',
   }, [icon(k.icon, 18, `mt-px ${k.color}`), h('span', { class: 'min-w-0 flex-1', text: message })]);
-  $('#toasts').append(el);
+  // Over an open dialog, the toasts go inside it: everything outside a modal is drawn under it, and inert.
+  // They're still fixed to the viewport there, and go back to <body> when it closes (bindStatic).
+  const box = $('#toasts');
+  const host = document.querySelector('dialog[open]') || document.body;
+  if (box.parentElement !== host) host.append(box);
+  box.append(el);
   setTimeout(() => el.remove(), ms);
 }
 
@@ -111,6 +120,26 @@ async function api(method, path, body) {
 
 function fail(err) {
   toast(errorText(err));
+}
+
+// Asks before an action, in the app's own dialog. Resolves true for the action's button; false for Cancel, Escape
+// or a click outside. Cancel starts focused, so a stray Enter doesn't go ahead.
+function askConfirm({ title, body, action, danger = false }) {
+  const dialog = $('#confirm-dialog');
+  const ok = $('#confirm-ok');
+  $('#confirm-title').textContent = title;
+  $('#confirm-body').textContent = body;
+  ok.textContent = action;
+  ok.className = danger ? 'btn-danger' : 'btn-primary';
+  dialog.showModal();
+  $('#confirm-cancel').focus();
+  return new Promise((resolve) => {
+    const answer = (yes) => { resolve(yes); dialog.close(); };
+    ok.onclick = () => answer(true);
+    $('#confirm-cancel').onclick = () => answer(false);
+    dialog.onclick = (e) => { if (e.target === dialog) answer(false); }; // the backdrop: the content fills the dialog
+    dialog.onclose = () => resolve(false); // Escape (already answered otherwise: a promise settles once)
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -190,25 +219,69 @@ async function loadSessions() {
 // Same test as the server's BLANK: nothing written in it, so it isn't kept
 const isBlank = (s) => !s.title?.trim() && !s.words?.length && !s.acronyms?.length && !BRANCHES.some((b) => s.answers?.[b]?.trim());
 
+// One tab per session in this browser (public/js/tabs.js): this tab saves before letting one go
+const tabs = sessionTabs({
+  release: () => flushSave().catch(() => {}),
+  onLost: (sid) => {
+    if (state.session?._id !== sid) return;
+    state.elsewhere = true;
+    closePanel();
+    wakeRunWait(); // its job's results are the other tab's to show now
+    renderElsewhere();
+  },
+});
+
+// The open session is in another tab: the stage waits, inert, behind "Open in another tab" until Use here
+function renderElsewhere() {
+  const on = !!state.session && state.elsewhere;
+  const was = !$('#elsewhere').hidden;
+  for (const id of ['#graph-wrap', '#workflow', '#canvas-ui', '#topbar']) $(id).inert = on;
+  show($('#elsewhere'), on);
+  if (on && !was) $('#elsewhere-use').focus();
+}
+
+// Use here: the other tab saves and steps aside, then this one loads the session as saved
+async function useHere() {
+  const sid = state.session?._id;
+  if (!sid) return;
+  const btn = $('#elsewhere-use');
+  btn.disabled = true;
+  try {
+    await tabs.take(sid);
+    await openSession(sid, { push: false });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function openSession(id, { push = true } = {}) {
   await flushSave();
   const prev = state.session;
   try {
-    const { session } = await api('GET', `/sessions/${id}`);
+    // Asked of the other tabs while the session loads
+    const [mine, { session }] = await Promise.all([tabs.claim(id), api('GET', `/sessions/${id}`)]);
     state.session = session;
+    state.elsewhere = !mine;
+    wakeRunWait(); // a run being waited for was the last session's (or this one's previous copy): stop waiting now
     // Leaving a blank session drops it; if the delete fails, the next list load sweeps it
     if (prev && prev._id !== id && isBlank(prev)) {
       state.sessions = state.sessions.filter((s) => s._id !== prev._id);
       api('DELETE', `/sessions/${prev._id}`).catch(() => {});
     }
-    state.langHint = false;
-    state.step = session.acronyms?.length ? 'acronyms' : session.words?.length ? 'explore' : 'describe';
+    const running = session.run?.status === 'running';
+    // A job still making its words ("Get acronyms") stays on Describe until they're in
+    state.step = session.acronyms?.length || (running && session.run.phase !== 'words') ? 'acronyms' : session.words?.length ? 'explore' : 'describe';
     state.newAcronyms = new Set();
     closePanel();
     toggleOptions(false);
     if (push) setUrl(id);
     renderAll({ resetGraph: true });
     closeDrawer();
+    // Its job is still going (the page was reloaded, or left the session): wait for it again, unless another tab is
+    if (running && mine) {
+      show($('#acronym-status'), false);
+      followRun();
+    }
   } catch (err) {
     // Arriving by address or Back at a session that's gone (often a blank one, swept): open the newest, no error
     if (push || err.status !== 404) fail(err);
@@ -225,7 +298,9 @@ async function openSession(id, { push = true } = {}) {
 
 async function createSession() {
   try {
-    const { session, expiresInMs } = await api('POST', '/sessions', { language: state.session?.language, model: currentModel() });
+    // Settings → General may set the language; otherwise it's the open session's
+    const language = prefs.get(PREF_LANGUAGE) || state.session?.language;
+    const { session, expiresInMs } = await api('POST', '/sessions', { language, model: currentModel() });
     state.sessions.unshift({ _id: session._id, title: session.title, language: session.language, updatedAt: session.updatedAt, expiresAt: endIn(expiresInMs) });
     scheduleExpiry();
     setSessionSearch(false); // so the new, untitled session isn't filtered out
@@ -317,8 +392,6 @@ async function offerGuestSessions() {
     h('span', { class: 'min-w-0 truncate text-base text-zinc-800', text: s.title || t('untitled') }),
     h('span', { class: 'shrink-0 text-sm text-zinc-500', text: fmt.format(new Date(s.updatedAt)) }),
   ])));
-  const error = $('#guest-dialog-error');
-  show(error, false);
   renderGuestButtons(null);
 
   let pending = null; // the request in flight, if any
@@ -327,7 +400,6 @@ async function offerGuestSessions() {
   // { move, count } once answered (count: sessions the server actually moved or deleted), null if dismissed
   const answer = await new Promise((resolve) => {
     const answerWith = (move) => () => {
-      show(error, false);
       renderGuestButtons(move ? 'move' : 'delete');
       pending = api(move ? 'POST' : 'DELETE', move ? '/guest-sessions/move' : '/guest-sessions').then(
         (r) => {
@@ -336,8 +408,7 @@ async function offerGuestSessions() {
         },
         (err) => {
           pending = null;
-          error.textContent = errorText(err); // a toast would sit under the modal
-          show(error, true);
+          fail(err); // shown over the dialog, which waits for the choice to be made again
           renderGuestButtons(null);
         }
       );
@@ -382,7 +453,13 @@ async function renameSession(id, title) {
 
 async function deleteSession(id) {
   const item = state.sessions.find((s) => s._id === id);
-  if (!confirm(t('confirmDeleteSession', { title: item?.title || t('untitled') }))) return;
+  const sure = await askConfirm({
+    title: t('confirmDeleteSessionTitle'),
+    body: t('confirmDeleteSession', { title: item?.title || t('untitled') }),
+    action: t('delete'),
+    danger: true,
+  });
+  if (!sure) return;
   try {
     await api('DELETE', `/sessions/${id}`);
     state.sessions = state.sessions.filter((s) => s._id !== id);
@@ -439,7 +516,16 @@ async function flushSave() {
       }
       if (!pendingPatch) setSaveStatus('saved');
     })
-    .catch((err) => { setSaveStatus('saveError'); fail(err); })
+    .catch((err) => {
+      if (err.code === 'language_locked' && state.session?._id === id) {
+        state.session.language = err.data.language;
+        renderLanguage();
+        setSaveStatus('');
+      } else {
+        setSaveStatus('saveError');
+      }
+      fail(err);
+    })
     .finally(() => { savePromise = null; });
   await savePromise;
 }
@@ -449,6 +535,14 @@ async function flushSave() {
 
 const words = () => state.session?.words || [];
 const wordById = (id) => words().find((w) => w._id === id);
+// Expand stops this many layers under a branch's own words (config/limits.js, via a <body> data attribute)
+const EXPAND_DEPTH = Number(document.body.dataset.expandDepth) || 2;
+// How many expansions down a word is: 0 for a branch's own words, 1 for their expanded children… Mirrors the server's.
+function wordDepth(w) {
+  let depth = 0;
+  for (let p = wordById(w.parentId); p && depth < words().length; p = wordById(p.parentId)) depth++;
+  return depth;
+}
 // Answer limits come from config/limits.js via <body> data attributes; min ignores whitespace.
 const ANSWER_MIN = Number(document.body.dataset.answerMin) || 100;
 const ANSWER_MAX = Number(document.body.dataset.answerMax) || 500;
@@ -481,17 +575,35 @@ function addWords(list) {
 // With no runs left it can't, so the button stays "Generate words".
 const getsAcronyms = () => !words().length && !state.session?.acronyms?.length && runsLeft() > 0;
 
+// "Get acronyms" is one job on the server, words then acronyms (generateAcronyms), so a reload or another tab
+// can't split it or repeat it
 async function onGenerateWords() {
-  const chain = getsAcronyms();
-  const added = await expandBranches(BRANCHES.filter(hasAnswer), { all: true, chain });
-  if (chain && added) await generateAcronyms({ first: true });
+  if (getsAcronyms()) return generateAcronyms({ first: true });
+  await expandBranches(BRANCHES.filter(hasAnswer), { all: true });
 }
 
-// all: triggered by "Generate words", which owns the 'words' busy state even with one answered branch.
-// chain: acronyms follow right away, so the words toast stays quiet. Resolves to the number of words added.
-async function expandBranches(branches, { all = false, chain = false } = {}) {
+// First AI title of session sid (the server makes it only once). A rename typed since titleBefore is newer: keep and resave it.
+function applyAiTitle(sid, title, titleBefore) {
+  state.session.aiTitle = title;
+  if (state.session.title === titleBefore) {
+    setTitle(title, 'ai');
+    const item = state.sessions.find((s) => s._id === sid);
+    if (item) { item.title = title; renderSessions(); }
+  } else {
+    queueSave({ title: state.session.title, titleSource: state.session.titleSource });
+  }
+}
+
+// Words could not be made for these branches ({ <branch>: error })
+function toastBranchErrors(errors) {
+  for (const [b, e] of Object.entries(errors || {})) {
+    toast(t('branchFailed', { branch: t(`b_${b}`), message: errorText({ code: e.error, message: e.message, data: e }) }));
+  }
+}
+
+// all: triggered by "Generate words", which owns the 'words' busy state even with one answered branch
+async function expandBranches(branches, { all = false } = {}) {
   const key = branches.length === 1 && !all ? `branch:${branches[0]}` : 'words';
-  let added = 0;
   await flushSave();
   await withBusy(key, async () => {
     const sid = state.session._id;
@@ -499,26 +611,12 @@ async function expandBranches(branches, { all = false, chain = false } = {}) {
     const data = await api('POST', `/sessions/${sid}/expand`, branches.length === 1 ? { branches } : {});
     state.usage = data.usage;
     if (state.session?._id !== sid) return;
-    // First AI title of the session (the server makes it only once). A rename typed while it ran is newer: keep and resave it.
-    if (data.title) {
-      state.session.aiTitle = data.title;
-      if (state.session.title === titleBefore) {
-        setTitle(data.title, 'ai');
-        const item = state.sessions.find((s) => s._id === sid);
-        if (item) { item.title = data.title; renderSessions(); }
-      } else {
-        queueSave({ title: state.session.title, titleSource: state.session.titleSource });
-      }
-    }
+    if (data.title) applyAiTitle(sid, data.title, titleBefore);
     addWords(data.words);
-    added = data.words.length;
     if (data.words.length && state.step === 'describe') setStep('explore');
-    if (!chain || !data.words.length) toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
-    for (const [b, e] of Object.entries(data.errors || {})) {
-      toast(t('branchFailed', { branch: t(`b_${b}`), message: errorText({ code: e.error, message: e.message }) }));
-    }
+    toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
+    toastBranchErrors(data.errors);
   });
-  return added;
 }
 
 async function expandWord(id) {
@@ -563,7 +661,9 @@ async function patchWord(id, body) {
 
 async function deleteWord(id) {
   const w = wordById(id);
-  if (!w || !confirm(t('confirmDeleteWord', { word: w.text }))) return;
+  if (!w) return;
+  const sure = await askConfirm({ title: t('confirmDeleteWordTitle'), body: t('confirmDeleteWord', { word: w.text }), action: t('delete'), danger: true });
+  if (!sure) return;
   try {
     const { deleted } = await api('DELETE', `/sessions/${state.session._id}/words/${id}`);
     const gone = new Set(deleted);
@@ -592,9 +692,10 @@ async function bulkSelect(branch, selected) {
 // ---------------------------------------------------------------------------
 // Acronyms
 
-// first: the run Get acronyms starts on its own, with settings nobody has looked at yet.
+// first: "Get acronyms", a fresh session's first click: one job makes the words, then the acronyms, with settings
+// nobody has looked at yet. The panel stays on Describe until its words are in.
 async function generateAcronyms({ first = false } = {}) {
-  setStep('acronyms'); // where the result, and the options a failure points to, are
+  if (!first) setStep('acronyms'); // where the result, and the options a failure points to, are
   const minLength = Number($('#min-length').value);
   const maxLength = Number($('#max-length').value);
   if (!Number.isInteger(minLength) || !Number.isInteger(maxLength) || minLength < 2 || maxLength > 8 || minLength > maxLength) {
@@ -609,31 +710,131 @@ async function generateAcronyms({ first = false } = {}) {
     realWordsOnly: $('#real-only').checked,
     allowChunks: $('#chunks').checked,
     maxPerBranch: Number($('#per-branch').value),
+    words: first,
   };
   show($('#acronym-status'), false); // the button shows progress; the note returns with the result
-  await withBusy('acronyms', async () => {
+  if (first) await flushSave(); // the words come from the answers as saved
+  await withBusy(first ? 'words' : 'acronyms', async () => {
     const sid = state.session._id;
-    const data = await api('POST', `/sessions/${sid}/acronyms/generate`, body).catch((err) => {
+    const { run } = await api('POST', `/sessions/${sid}/acronyms/generate`, body).catch((err) => {
+      // Started in another tab: wait for that one
+      if (err.code === 'run_in_progress' && err.data.run) return err.data;
       // Fixed in the options (lengths, words per branch): open them under the error
       if (['not_enough_words', 'length_unreachable'].includes(err.code)) toggleOptions(true);
       throw err;
     });
-    state.usage = data.usage;
-    if (state.session?._id !== sid) return;
-    // A first run's acronyms are all new: the tag only tells a run's from the ones before it
-    const before = state.session.acronyms.length || state.session.lockedAcronyms;
-    state.newAcronyms = new Set(before ? data.acronyms.map((a) => a._id) : []);
-    state.session.acronyms.push(...data.acronyms);
-    state.session.lockedAcronyms = (state.session.lockedAcronyms || 0) + data.locked;
-    // The run ends with its cards, which show once their domains are checked
-    await withBusy('acronymDomains', () => checkRunDomains(sid, data.acronyms));
-    if (state.session?._id !== sid) return;
-    renderAcronyms();
-    const note = $('#acronym-status');
-    note.textContent = data.acronyms.length ? t('acronymsAdded', { n: data.acronyms.length }) : t('noNewAcronyms');
-    show(note, true);
-    if (data.llmError && state.health.llm) toast(errorText({ code: data.llmError.error, message: data.llmError.message }));
+    if (state.session?._id === sid) state.session.run = run;
   });
+  followRun();
+}
+
+// A run goes on on the server after Generate is answered (hosts cut long requests): the page asks how it's going
+// every RUN_POLL_MS. A failed ask that doesn't come from the run (runFine) doesn't end the wait until RUN_PATIENCE_MS
+// have gone by without an answer: by then a run whose server went away is reported interrupted.
+const RUN_POLL_MS = 2000;
+const RUN_PATIENCE_MS = 90 * 1000;
+// A dropped connection, the host's own error page (no error code of ours: a deploy, a restart) or a database blip:
+// the run itself may be fine. The run's own errors come as ours, with statuses like 502 or 504 too.
+const runFine = (err) => err.code === 'network' || err.code === 'database_unavailable' || (err.code === 'generic' && err.status >= 502);
+// Ends the wait's pause between asks at once: openSession calls it, so leaving a session doesn't keep the
+// Generate button busy for up to RUN_POLL_MS in the next one
+let wakeRunWait = () => {};
+
+// Waits for the open session's job (state.session.run) to end, then shows its acronyms. Leaving the session stops
+// the waiting, not the job: opening it again starts waiting again (openSession). In its words phase ("Get
+// acronyms"), Generate words is busy too, until the words are in.
+async function followRun() {
+  const run = state.session?.run;
+  if (run?.status !== 'running' || state.elsewhere) return;
+  const sid = state.session._id;
+  const titleBefore = state.session.title;
+  const inWords = () => run.phase === 'words';
+  // The job made its words: they show, and the panel moves on to the acronyms it makes from them
+  const wordsIn = async (wordErrors) => {
+    run.phase = 'acronyms';
+    state.busy.delete('words');
+    await syncWords(sid, titleBefore).catch(() => {});
+    if (state.session?.run !== run) return;
+    if (words().length) setStep('acronyms');
+    toastBranchErrors(wordErrors);
+    renderBusy();
+  };
+  await withBusy('acronyms', async () => {
+    if (inWords()) { state.busy.add('words'); renderBusy(); }
+    try {
+      let data;
+      try {
+        data = await waitForRun(sid, run, (answer) => (inWords() && answer.phase !== 'words' ? wordsIn(answer.wordErrors) : null));
+      } catch (err) {
+        if (inWords()) await wordsIn(); // words made before the error are in the session
+        // Fixed in the options (lengths, words per branch): open them under the error
+        if (['not_enough_words', 'length_unreachable'].includes(err.code) && state.session?.run === run) {
+          setStep('acronyms');
+          toggleOptions(true);
+        }
+        throw err;
+      }
+      if (data) state.usage = data.usage;
+      // Left, or opened again: that copy of the session came with the job's state (and its results, once it's done)
+      if (!data || state.session?.run !== run) return;
+      if (inWords()) await wordsIn(data.wordErrors);
+      if (data.noWords) { toast(t('noNewWords'), 'info'); return; }
+      state.session.lastRunAt = data.lastRunAt;
+      // A first run's acronyms are all new: the tag only tells a run's from the ones before it
+      const before = state.session.acronyms.length || state.session.lockedAcronyms;
+      state.newAcronyms = new Set(before ? data.acronyms.map((a) => a._id) : []);
+      state.session.acronyms.push(...data.acronyms);
+      state.session.lockedAcronyms = (state.session.lockedAcronyms || 0) + data.locked;
+      // The run ends with its cards, which show once their domains are checked
+      await withBusy('acronymDomains', () => checkRunDomains(sid, data.acronyms));
+      if (state.session?._id !== sid) return;
+      renderAcronyms();
+      const note = $('#acronym-status');
+      note.textContent = data.acronyms.length ? t('acronymsAdded', { n: data.acronyms.length }) : t('noNewAcronyms');
+      show(note, true);
+      if (data.llmError && state.health.llm) toast(errorText({ code: data.llmError.error, message: data.llmError.message, data: data.llmError }));
+    } finally {
+      state.busy.delete('words');
+    }
+  });
+  // The open session changed while this job was waited for (or while another one was): its job is next
+  if (state.session?.run !== run) followRun();
+}
+
+// The words a job made in session sid, from the server: those this page doesn't have yet, and the AI title with them
+async function syncWords(sid, titleBefore) {
+  const { session } = await api('GET', `/sessions/${sid}`);
+  if (state.session?._id !== sid) return;
+  const have = new Set(words().map((w) => w._id));
+  addWords(session.words.filter((w) => !have.has(w._id)));
+  if (session.aiTitle && !state.session.aiTitle) applyAiTitle(sid, session.aiTitle, titleBefore);
+}
+
+// Asks about session sid's job until it's over: what it made ({ status: 'done', acronyms, … }), or its error
+// (thrown). null once the page holds another copy of the session than the one the job was on. onRunning(answer):
+// each "still running" answer, with its phase.
+async function waitForRun(sid, run, onRunning = () => {}) {
+  for (let answeredAt = Date.now(); ;) {
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, RUN_POLL_MS);
+      wakeRunWait = () => { clearTimeout(timer); resolve(); };
+    });
+    if (state.session?.run !== run || state.elsewhere) return null;
+    try {
+      const data = await api('GET', `/sessions/${sid}/acronyms/runs/${run._id}`);
+      answeredAt = Date.now();
+      if (data.status === 'running') {
+        await onRunning(data);
+        continue;
+      }
+      run.status = data.status;
+      return data;
+    } catch (err) {
+      if (runFine(err) && Date.now() - answeredAt < RUN_PATIENCE_MS) continue;
+      run.status = 'failed';
+      throw err;
+    }
+  }
 }
 
 async function toggleFavorite(a) {
@@ -660,7 +861,8 @@ async function deleteAcronym(a) {
 }
 
 async function clearAcronyms() {
-  if (!confirm(t('confirmClear'))) return;
+  const sure = await askConfirm({ title: t('confirmClearTitle'), body: t('confirmClear'), action: t('clear'), danger: true });
+  if (!sure) return;
   try {
     await api('POST', `/sessions/${state.session._id}/acronyms/clear`);
     state.session.acronyms = state.session.acronyms.filter((a) => a.favorite);
@@ -751,6 +953,7 @@ function renderAll({ resetGraph = false } = {}) {
   applyStatic();
   renderBanners();
   renderSessions();
+  renderElsewhere();
   const has = !!state.session;
   show($('#workspace'), has);
   show($('#session-bar'), has);
@@ -769,7 +972,6 @@ function renderAll({ resetGraph = false } = {}) {
   }
   $('#title').value = state.session.title;
   $('#title').placeholder = t('untitled');
-  $('#language').value = state.session.language;
   renderModelSelect();
   renderQuestions();
   renderLegend();
@@ -786,8 +988,6 @@ function renderBanners() {
   show($('#banner-db'), !state.health.db);
   show($('#banner-llm'), state.health.db !== undefined && !state.health.llm);
   $('#banner-llm-text').textContent = t('llmDown');
-  show($('#banner-lang'), !!state.session && state.langHint);
-  if (state.session) $('#banner-lang-text').textContent = t('langHint', { lang: t(`lang_${state.session.language}`) });
   $('#new-session').disabled = !state.health.db;
   $('#session-search-btn').disabled = !state.health.db;
   document.querySelectorAll('#empty-new, #sessions-empty-new').forEach((b) => { b.disabled = !state.health.db; });
@@ -942,6 +1142,8 @@ function startRename(li, s) {
   input.select();
 }
 
+let modelPicker = null; // the session's model dropdown over #model (select.js)
+
 function renderModelSelect() {
   const sel = $('#model');
   const names = state.models.map((m) => m.name);
@@ -959,6 +1161,7 @@ function renderModelSelect() {
   }));
   sel.value = current;
   sel.disabled = !state.health.llm || !state.session;
+  modelPicker?.sync();
 }
 
 const dot = (b, extra = 'size-2.5') => h('span', { class: `inline-block shrink-0 rounded-full ${extra}`, style: { background: COLORS[b] }, 'aria-hidden': 'true' });
@@ -1154,6 +1357,8 @@ function initGraph() {
   if (!window.cytoscape) return;
   if (graph) { graph.cy.destroy(); graph = null; }
   graph = createGraph($('#graph'), {
+    layout: graphLayout,
+    theme: currentTheme(),
     onWordTap: (id) => {
       closePanel();
       const w = wordById(id);
@@ -1197,6 +1402,7 @@ function renderWords() {
   renderCanvas();
   renderPerBranchHint();
   renderStepsDone();
+  renderNewWords();
   graph?.syncWords(list);
   renderWordList();
   if (state.panel) renderPanel();
@@ -1232,7 +1438,7 @@ function fitPerBranch(minLength) {
 
 function wordChip(w) {
   const color = COLORS[w.branch];
-  const tone = w.selected ? { background: color, color: '#fff' } : { background: '#fff', color: '#71717a' };
+  const tone = w.selected ? { background: color, color: 'var(--color-on-branch)' } : { background: 'var(--color-surface)', color: 'var(--color-zinc-500)' };
   const toggle = h('button', {
     type: 'button',
     'aria-pressed': String(w.selected),
@@ -1314,7 +1520,7 @@ function partNode(p) {
     cut = i + 1;
   }
   return h('span', {}, [
-    h('strong', { class: 'font-bold', style: { color: COLORS[p.branch] || '#18181b' }, text: text.slice(0, cut) }),
+    h('strong', { class: 'font-bold', style: { color: COLORS[p.branch] || 'var(--color-zinc-900)' }, text: text.slice(0, cut) }),
     text.slice(cut),
   ]);
 }
@@ -1379,7 +1585,7 @@ function acronymCard(a) {
   const ids = a.parts.map((p) => p.wordId);
   const scoreCls = a.score == null ? 'bg-zinc-100 text-zinc-400' : a.score >= 70 ? 'bg-emerald-50 text-emerald-700' : a.score >= 40 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700';
   const li = h('li', {
-    class: `rounded-md border bg-white p-3 transition-colors ${a.favorite ? 'border-amber-300 hover:border-amber-500 focus-within:border-amber-500' : 'border-zinc-200 hover:border-cerise-400 focus-within:border-cerise-400'}`,
+    class: `rounded-md border bg-surface p-3 transition-colors ${a.favorite ? 'border-amber-300 hover:border-amber-500 focus-within:border-amber-500' : 'border-zinc-200 hover:border-cerise-400 focus-within:border-cerise-400'}`,
     onmouseenter: () => graph?.highlight(ids),
     onmouseleave: () => graph?.clearHighlight(),
     onfocusin: () => graph?.highlight(ids),
@@ -1402,7 +1608,7 @@ function acronymCard(a) {
     a.tagline ? h('p', { class: 'mt-1 text-base italic text-zinc-500', text: `“${a.tagline}”` }) : null,
     h('div', { class: 'mt-2 flex items-center gap-1' }, [
       h('div', { class: 'flex min-w-0 flex-1 flex-wrap gap-1' }, [
-        a.isRealWord ? badge(t('realWord'), 'bg-sky-50 text-sky-700') : badge(t('invented'), 'bg-zinc-100 text-zinc-600'),
+        !hasDictionary() ? null : a.isRealWord ? badge(t('realWord'), 'bg-sky-50 text-sky-700') : badge(t('invented'), 'bg-zinc-100 text-zinc-600'),
         badge(t('branchesCovered', { n: branchesUsed }), 'bg-zinc-100 text-zinc-600'),
         badge(a.source === 'llm' ? 'LLM' : 'dict', 'bg-zinc-50 text-zinc-400'),
       ]),
@@ -1457,6 +1663,7 @@ function lockedCard(n) {
 }
 
 function renderAcronyms() {
+  if (state.filter === 'real' && !hasDictionary()) state.filter = 'all'; // its button is hidden (renderRealOnly())
   const all = state.session?.acronyms || [];
   const list = sortedAcronyms();
   const locked = state.filter === 'all' ? state.session?.lockedAcronyms || 0 : 0;
@@ -1512,6 +1719,7 @@ function renderBusy() {
   const gen = $('#generate-words');
   setButtonBusy(gen, wordsBusy, t(getsAcronyms() ? 'getAcronyms' : 'generateWords'), t('generatingWords'), 'sparkles');
   gen.disabled = !llm || wordsBusy || !BRANCHES.some(hasAnswer) || BRANCHES.some(answerTooShort);
+  renderLanguage();
 
   document.querySelectorAll('[data-branch-more]').forEach(renderBranchMore);
   BRANCHES.forEach(renderReformulate);
@@ -1522,8 +1730,35 @@ function renderBusy() {
   btn.disabled = !llm || acr || !words().some((w) => w.selected) || runsLeft() === 0;
   renderAcronymEmpty();
   renderUsage();
-  renderPeekAction();
+  renderNewWords(); // and the peek action
   if (state.panel) renderPanel();
+}
+
+// Selected words made since the last acronym run, which its results don't reflect yet: a word's ObjectId starts
+// with the second it was made, lastRunAt is when the run read the words (both server time). Only while another
+// run could use them.
+function newWordsHint() {
+  const last = state.session?.lastRunAt ? new Date(state.session.lastRunAt).getTime() : 0;
+  if (!last || !state.health.llm || state.busy.has('acronyms') || runsLeft() === 0) return '';
+  const n = words().filter((w) => w.selected && parseInt(w._id.slice(0, 8), 16) * 1000 > last).length;
+  return n ? t('newWordsHint', { n }) : '';
+}
+
+// A dot on a button's corner, for the new words when the line over Generate acronyms is folded away
+const newWordsDot = (color) => h('span', { class: `absolute right-1.5 top-1.5 size-2 rounded-full ${color}`, 'aria-hidden': 'true' });
+
+// "5 new words since your last run" over Generate acronyms. The panel's folded states show a dot instead:
+// on the mobile peek action, and on the desktop's expand button (renderPeekAction, renderMinimize).
+function renderNewWords() {
+  const hint = newWordsHint();
+  const line = $('#new-words-hint');
+  line.replaceChildren(...(hint ? [icon('sparkles', 16), hint] : []));
+  show(line, !!hint);
+  const btn = $('#generate-acronyms');
+  if (hint) btn.setAttribute('aria-describedby', 'new-words-hint');
+  else btn.removeAttribute('aria-describedby');
+  renderPeekAction();
+  renderMinimize();
 }
 
 // ---------------------------------------------------------------------------
@@ -1555,12 +1790,30 @@ function renderUsage() {
   if (!left && u.plan !== 'paid') {
     line.append(' · ', upgradeCta(t(u.plan === 'guest' ? 'signUpForRuns' : 'subscribeForRuns'), 'font-medium text-cerise-600 hover:underline'));
   }
-  for (const [id, allowed] of [['real-only', u.realWords], ['chunks', u.chunks]]) {
-    const box = $(`#${id}`);
-    box.disabled = !allowed;
-    if (!allowed) box.checked = false;
-    show($(`#${id}-plan`), !allowed);
-  }
+  const chunks = $('#chunks');
+  chunks.disabled = !u.chunks;
+  if (!u.chunks) chunks.checked = false;
+  show($('#chunks-plan'), !u.chunks);
+  renderRealOnly();
+}
+
+// Languages with a word list (SOURCES in services/acronym/dictionary.js). Without one (Haitian Creole), nothing
+// tells whether an acronym is a real word: no "Real words only", Real words filter or real-word badge.
+const DICTIONARY_LANGUAGES = new Set(['fr', 'en', 'es']);
+const hasDictionary = () => !state.session || DICTIONARY_LANGUAGES.has(state.session.language);
+
+// "Real words only" needs the plan and a word list in the session's language. Without the list, its tag says
+// so rather than offer an upgrade that wouldn't help.
+function renderRealOnly() {
+  const dict = hasDictionary();
+  const plan = !state.usage || state.usage.realWords;
+  const box = $('#real-only');
+  box.disabled = !dict || !plan;
+  if (box.disabled) box.checked = false;
+  show($('#real-only-plan'), dict && !plan);
+  show($('#real-only-lang'), !dict);
+  if (!dict) $('#real-only-lang').textContent = t('notInLanguage', { lang: t(`lang_${state.session.language}`) });
+  show($('#filters [data-filter="real"]'), dict);
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,9 +1837,26 @@ function renderStep() {
   renderPeekAction();
 }
 
+// The session's language is fixed once Describe is done (it has words, or acronyms): they're in the language
+// they were made in. Also while the first words are on their way. The server refuses a change too.
+const languageLocked = () => words().length > 0 || !!(state.session?.acronyms?.length || state.session?.lockedAcronyms);
+let sessionLanguagePicker = null; // the session's language dropdown over #language (select.js)
+
+function renderLanguage() {
+  if (!state.session) return;
+  const sel = $('#language');
+  const locked = languageLocked();
+  sel.value = state.session.language;
+  sel.disabled = locked || state.busy.has('words');
+  sel.title = t(locked ? 'languageLocked' : 'language');
+  sessionLanguagePicker?.sync();
+  renderRealOnly();
+}
+
 // A step is done once it has produced something: words for Describe, acronyms for Explore.
 // Acronyms is the last step, so it never shows as done.
 function renderStepsDone() {
+  renderLanguage();
   const done = { describe: words().length > 0, explore: !!state.session?.acronyms?.length, acronyms: false };
   document.querySelectorAll('#steps [data-step]').forEach((tab) => {
     const on = done[tab.dataset.step];
@@ -1602,8 +1872,10 @@ function renderPeekAction() {
   const describe = state.step === 'describe';
   const source = describe ? $('#generate-words') : $('#generate-acronyms');
   const busy = describe ? state.busy.has('words') : state.busy.has('acronyms');
-  const label = t(!describe ? 'generateAcronyms' : getsAcronyms() ? 'getAcronyms' : 'generateWords');
-  btn.replaceChildren(busy ? spinner() : icon('sparkles', 20));
+  const hint = !describe && newWordsHint();
+  const action = t(!describe ? 'generateAcronyms' : getsAcronyms() ? 'getAcronyms' : 'generateWords');
+  const label = hint ? `${action} (${hint})` : action;
+  btn.replaceChildren(...[busy ? spinner() : icon('sparkles', 20), hint && newWordsDot('bg-on-brand')].filter(Boolean));
   btn.disabled = source.disabled;
   btn.setAttribute('aria-busy', String(busy));
   btn.setAttribute('aria-label', label);
@@ -1621,11 +1893,579 @@ function toggleOptions(open = $('#options-menu').hidden) {
   $('#options-btn').setAttribute('aria-expanded', String(open));
 }
 
-// Profile popup (signed-in users only; guests get a plain link to the login page)
-function toggleAccount(open = $('#account-menu').hidden) {
-  show($('#account-menu'), open);
-  $('#account-btn').setAttribute('aria-expanded', String(open));
-  if (open) $('#account-menu button').focus();
+// ---------------------------------------------------------------------------
+// Settings: the account badge (sidebar, bottom) opens the settings dialog on General; its tabs are General, Usage,
+// Billing and Account. Feedback is a toast (shown over the dialog); only the Account tab's forms say what's wrong
+// under their fields.
+
+const SETTINGS_TABS = ['general', 'usage', 'billing', 'account'];
+const GUEST_HOURS = Number(document.body.dataset.guestHours) || 3;
+const USAGE_HOURS = Number(document.body.dataset.usageHours) || 5;
+const PREF_LANGUAGE = 'pref.newSessionLanguage'; // new sessions' language; '' or none: the open session's
+const PREF_GRAPH = 'pref.graphLayout'; // how the graph is drawn: one of LAYOUTS in graph.js; none: 'network'
+const PREF_THEME = 'pref.theme'; // read by public/js/theme.js, which puts it on <html> before the page is drawn
+
+let languagePicker = null; // General's custom dropdown over #pref-language (select.js)
+// Kept here too, so it holds until a reload when the browser won't save it
+let graphLayout = LAYOUTS.includes(prefs.get(PREF_GRAPH)) ? prefs.get(PREF_GRAPH) : LAYOUTS[0];
+const currentTheme = () => document.documentElement.dataset.theme; // as theme.js set it, or since changed
+let accountBusy = null; // 'name' | 'email' | 'email-cancel' | 'password' | 'export' | 'delete' while one is in flight
+let accountDeleted = false; // then closing the dialog starts the page over, as a guest
+let passwordChecks = null; // runs the new password's live checks again (PasswordStrength.watch, password.js)
+// The account as the Account tab shows it, from the page and then from each change; null for a guest
+const profile = $('#profile') && {
+  name: $('#profile').dataset.name,
+  email: $('#profile').dataset.email,
+  pendingEmail: $('#profile').dataset.pendingEmail || null, // waiting for the link sent to it
+};
+
+function openSettings(tab = SETTINGS_TABS[0]) {
+  setSettingsTab(tab);
+  $('#settings-dialog').showModal();
+  $(`#settings-tab-${tab}`).focus();
+}
+
+// Not while the account is being deleted; once it is, the page starts over
+function closeSettings() {
+  if (accountDeleted) return location.assign('/app');
+  if (accountBusy === 'delete') return;
+  $('#settings-dialog').close();
+}
+
+function onSettingsClosed() {
+  if (accountDeleted) return location.assign('/app');
+  if (profile) openAccountForm(null);
+  $('#account-btn').focus();
+}
+
+function setSettingsTab(tab) {
+  for (const name of SETTINGS_TABS) {
+    const on = name === tab;
+    const el = $(`#settings-tab-${name}`);
+    el.setAttribute('aria-selected', String(on));
+    el.tabIndex = on ? 0 : -1;
+    show($(`#settings-${name}`), on);
+  }
+  if (tab === 'usage' || tab === 'billing') {
+    renderSettingsUsage();
+    renderSettingsBilling();
+    refreshUsage();
+  }
+  if (tab === 'billing') refreshTransactions();
+  if (tab === 'general') {
+    $('#pref-language').value = prefs.get(PREF_LANGUAGE) || '';
+    languagePicker.sync();
+    document.querySelectorAll('input[name="graph-layout"]').forEach((r) => { r.checked = r.value === graphLayout; });
+    document.querySelectorAll('input[name="theme"]').forEach((r) => { r.checked = r.value === currentTheme(); });
+    // Next frame: openSettings() shows the dialog after this, and a hidden row can't be measured
+    requestAnimationFrame(() => document.querySelectorAll('#settings-general .choice-row').forEach(revealChoice));
+  }
+}
+
+// A row of cards scrolls sideways: when the chosen one is past an edge, it's brought in, aligned to the row's start
+// like the snap points (the row's padding keeps its ring showing). Sideways only, so the panel itself doesn't scroll.
+function revealChoice(row) {
+  const card = row.querySelector(':checked')?.closest('.choice-card');
+  if (!card) return;
+  const r = row.getBoundingClientRect();
+  const c = card.getBoundingClientRect();
+  const pad = parseFloat(getComputedStyle(row).paddingLeft) || 0;
+  if (c.left < r.left + pad || c.right > r.right - pad) row.scrollLeft += c.left - r.left - pad;
+}
+
+// Shown at once on the open session's graph, then on every graph until a reload, even if it can't be saved
+function onPrefGraph(e) {
+  const { value } = e.target;
+  graphLayout = value;
+  graph?.setLayout(value);
+  prefs.set(PREF_GRAPH, value);
+  if (prefs.get(PREF_GRAPH) !== value) return toast(t('prefNotSavedGraph'));
+  toast(t(`prefSavedGraph_${value}`), 'ok');
+}
+
+// Like the graph style: on at once, and until a reload even if it can't be saved
+function onPrefTheme(e) {
+  const { value } = e.target;
+  document.documentElement.dataset.theme = value;
+  graph?.setTheme(value);
+  prefs.set(PREF_THEME, value);
+  if (prefs.get(PREF_THEME) !== value) return toast(t('prefNotSavedTheme'));
+  toast(t(`prefSavedTheme_${value}`), 'ok');
+}
+
+// Read back before saying it's saved: storage can be blocked (private windows, site data off)
+function onPrefLanguage(e) {
+  const { value } = e.target;
+  prefs.set(PREF_LANGUAGE, value);
+  if ((prefs.get(PREF_LANGUAGE) || '') !== value) return toast(t('prefNotSaved'));
+  toast(value ? t('prefSavedLang', { lang: t(`lang_${value}`) }) : t('prefSavedSame'), 'ok');
+}
+
+// Another tab may have used some since: fetched again for the Usage and Billing tabs (with the plan's price and
+// dates), which show the last known counts meanwhile
+async function refreshUsage() {
+  if (!state.health.db) return;
+  try {
+    ({ usage: state.usage, plan: state.planInfo } = await api('GET', '/usage'));
+  } catch {
+    return;
+  }
+  renderSettingsUsage();
+  renderSettingsBilling();
+  renderBusy();
+}
+
+// A count of this window: "2 of 5", over a bar that turns red once it's all used
+function usageMeter(label, used, limit) {
+  const pct = limit ? Math.min(100, (used / limit) * 100) : 100;
+  return h('div', {}, [
+    h('div', { class: 'flex items-baseline justify-between gap-3' }, [
+      h('span', { class: 'min-w-0 text-base text-zinc-700', text: label }),
+      h('span', { class: 'shrink-0 text-sm tabular-nums text-zinc-500', text: t('usedOf', { used, limit }) }),
+    ]),
+    h('div', {
+      class: 'mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100',
+      role: 'progressbar',
+      'aria-label': label,
+      'aria-valuemin': '0',
+      'aria-valuemax': String(limit),
+      'aria-valuenow': String(Math.min(used, limit)),
+    }, h('div', { class: `h-full rounded-full ${used >= limit ? 'bg-red-500' : 'bg-cerise-500'}`, style: { width: `${pct}%` } })),
+  ]);
+}
+
+const usageLine = (label, value) => h('div', { class: 'flex items-center justify-between gap-3' }, [
+  h('span', { class: 'min-w-0 text-base text-zinc-700', text: label }),
+  value,
+]);
+const usageNote = (text, extra = 'text-zinc-500') => h('span', { class: `shrink-0 text-sm ${extra}`, text });
+const PLAN_ICONS = { guest: 'user', free: 'user-check', paid: 'crown' };
+const planTag = (text) => h('span', { class: 'shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500', text });
+const includedMark = () => h('span', { class: 'inline-flex shrink-0 items-center gap-1 text-sm text-emerald-700' }, [icon('check', 16), t('included')]);
+
+function settingsHeading(text, aside = null) {
+  return h('div', { class: 'flex items-baseline justify-between gap-3' }, [
+    h('h3', { class: 'text-base font-semibold text-zinc-800', text }),
+    aside && usageNote(aside),
+  ]);
+}
+
+const unavailable = (key) => h('p', { class: 'text-base text-zinc-500', text: t(key) });
+
+// This window's AI counts, against the plan's limits (services/usage.js toView)
+function renderSettingsUsage() {
+  const box = $('#settings-usage');
+  const u = state.usage;
+  if (!u) return box.replaceChildren(unavailable('usageUnavailable'));
+  const open = usageOpen();
+  const used = (kind) => (open ? u[kind].used : 0);
+  const r = u.reformulations;
+  let reformulations;
+  if (!r.limit) reformulations = usageLine(t('usageReformulations'), planTag(t('accountOnly')));
+  else if (state.session) reformulations = usageMeter(t('usageReformulationsHere'), open ? r.used[state.session._id] || 0 : 0, r.limit);
+  else reformulations = usageLine(t('usageReformulations'), usageNote(t('perSession', { n: r.limit })));
+
+  box.replaceChildren(
+    settingsHeading(t('aiUsage'), open ? t('usageResetsAt', { time: resetTime() }) : null),
+    h('div', { class: 'mt-3 space-y-4' }, [
+      usageMeter(t('usageRuns'), used('runs'), u.runs.limit),
+      usageMeter(t('usageWords'), used('words'), u.words.limit),
+      usageMeter(t('usageExpansions'), used('expansions'), u.expansions.limit),
+      reformulations,
+    ]),
+    h('p', { class: 'mt-3 max-w-prose text-sm text-zinc-500', text: t('usagePeriodHelp', { hours: USAGE_HOURS }) }),
+  );
+}
+
+// "$9", or "$9.50" (exact: cents=true gives "$9.00", for what was paid)
+const money = (amount, currency, cents = false) => new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency,
+  minimumFractionDigits: cents || amount % 1 ? 2 : 0,
+}).format(amount);
+
+// "$9 per month", or "Free"
+function priceText(price) {
+  if (!price) return t('priceFree');
+  return t(`pricePer_${price.interval}`, { price: money(price.amount, price.currency) });
+}
+
+// When the plan began and when its period ends, as [label, value] pairs ('—' where it isn't known)
+function planDates(p) {
+  const when = (at, style = { dateStyle: 'long' }) => (at ? new Intl.DateTimeFormat('en-GB', style).format(new Date(at)) : '—');
+  const withTime = { dateStyle: 'medium', timeStyle: 'short' };
+  if (p.plan === 'guest') {
+    // A guest lasts as long as their last session: each is erased GUEST_HOURS after it was last used
+    const end = Math.max(0, ...state.sessions.map((s) => s.expiresAt ?? 0));
+    return [[t('planStarted'), when(p.startedAt, withTime)], [t('planEndsIfUnused'), when(end || null, withTime)]];
+  }
+  if (p.plan === 'free') return [[t('planStarted'), when(p.startedAt)], [t('planEnds'), t('noEndDate')]];
+  return [[t('planStarted'), when(p.startedAt)], [t(p.renews ? 'planRenews' : 'planEnds'), when(p.periodEnd)]];
+}
+
+// The plan: its icon, name and price, the way to more (none past paid), then when it began and when its period ends
+function planCard(u) {
+  const p = state.planInfo?.plan === u.plan ? state.planInfo : null; // its price and dates, once fetched
+  const paid = u.plan === 'paid';
+  const line = paid ? 'border-cerise-200' : 'border-zinc-200';
+  const dates = p ? planDates(p) : [[t('planStarted'), ' '], [t('planEnds'), ' ']];
+  return h('div', { class: `rounded-md border ${line} ${paid ? 'bg-cerise-50/40' : ''}` }, [
+    h('div', { class: 'flex flex-col gap-4 p-4 sm:flex-row sm:items-center' }, [
+      h('div', { class: 'flex min-w-0 flex-1 items-center gap-3' }, [
+        h('span', { class: `inline-flex size-10 shrink-0 items-center justify-center rounded-full ${paid ? 'bg-cerise-100 text-cerise-600' : 'bg-zinc-100 text-zinc-500'}` }, icon(PLAN_ICONS[u.plan], 20)),
+        h('div', { class: 'min-w-0' }, [
+          h('h3', { class: 'text-base font-semibold text-zinc-800', text: t(`plan_${u.plan}`) }),
+          h('p', { class: 'mt-0.5 text-sm text-zinc-500', text: p ? priceText(p.price) : ' ' }),
+        ]),
+      ]),
+      !paid && upgradeCta(t(u.plan === 'guest' ? 'signUpFree' : 'subscribe'), 'btn-primary w-full shrink-0 sm:w-auto'),
+    ]),
+    h('dl', { class: `grid grid-cols-2 gap-4 border-t px-4 py-3 ${line}` }, dates.map(([label, value]) => h('div', { class: 'min-w-0' }, [
+      h('dt', { class: 'label', text: label }),
+      h('dd', { class: 'mt-0.5 text-base text-zinc-800', text: value }),
+    ]))),
+  ]);
+}
+
+// The plan with its price and dates, then what it includes, then an account's payments
+function renderSettingsBilling() {
+  const box = $('#settings-billing');
+  const u = state.usage;
+  if (!u) return box.replaceChildren(unavailable('billingUnavailable'));
+  box.replaceChildren(
+    planCard(u),
+    h('div', {}, [
+      settingsHeading(t('inYourPlan')),
+      h('div', { class: 'mt-3 space-y-2.5' }, [
+        usageLine(t('featureShown'), usageNote(u.shown == null ? t('featureShownAll') : String(u.shown), 'tabular-nums text-zinc-500')),
+        usageLine(t('featureChunks'), u.chunks ? includedMark() : planTag(t('accountOnly'))),
+        usageLine(t('featureModels'), u.allModels ? includedMark() : planTag(t('accountOnly'))),
+        usageLine(t('featureRealWords'), u.realWords ? includedMark() : planTag(t('paidOnly'))),
+      ]),
+    ]),
+    ...(profile ? [transactionHistory()] : []),
+  );
+}
+
+// Fetched each time Billing opens (a payment may have come in since); the last ones fetched show meanwhile
+async function refreshTransactions() {
+  if (!profile || !state.health.db) return;
+  try {
+    state.transactions = await api('GET', '/account/transactions');
+  } catch {
+    if (!state.transactions?.transactions) state.transactions = { error: true };
+  }
+  renderSettingsBilling();
+}
+
+const TRANSACTION_STATUS = {
+  paid: 'bg-emerald-50 text-emerald-700',
+  pending: 'bg-amber-50 text-amber-700',
+  failed: 'bg-red-50 text-red-700',
+  refunded: 'bg-zinc-100 text-zinc-600',
+};
+
+// One payment: what it was for and when, its amount and status, and the provider's receipt when there is one
+function transactionRow(tx) {
+  const receipt = /^https:\/\//.test(tx.receiptUrl || '')
+    ? h('a', { href: tx.receiptUrl, target: '_blank', rel: 'noopener noreferrer', class: 'icon-btn', 'aria-label': t('receiptFor', { date: longDate(tx.date) }), title: t('receipt') }, icon('receipt', 18))
+    : h('span', { class: 'size-10 shrink-0', 'aria-hidden': 'true' }); // keeps the amounts lined up
+  return h('li', { class: 'flex items-center gap-3 py-2 pl-4 pr-2' }, [
+    h('div', { class: 'min-w-0 flex-1' }, [
+      h('p', { class: 'truncate text-base text-zinc-800', text: t(`plan_${tx.plan}`) }),
+      h('p', { class: 'text-sm text-zinc-500', text: longDate(tx.date) }),
+    ]),
+    h('div', { class: 'flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3' }, [
+      h('span', { class: 'text-base tabular-nums text-zinc-800', text: money(tx.amount, tx.currency, true) }),
+      h('span', { class: `rounded-full px-2 py-0.5 text-xs font-medium ${TRANSACTION_STATUS[tx.status] || TRANSACTION_STATUS.pending}`, text: t(`transaction_${tx.status}`) }),
+    ]),
+    receipt,
+  ]);
+}
+
+const longDate = (at) => new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' }).format(new Date(at));
+
+// Transaction history: the account's payments, newest first (GET /api/account/transactions)
+function transactionHistory() {
+  const tx = state.transactions;
+  let body;
+  if (!tx) body = h('p', { class: 'text-base text-zinc-500', text: t('transactionsLoading') });
+  else if (tx.error) body = unavailable('transactionsUnavailable');
+  else if (!tx.transactions.length) body = h('p', { class: 'text-base text-zinc-500', text: t('transactionsNone') });
+  else {
+    body = h('div', {}, [
+      h('ul', { class: 'divide-y divide-zinc-100 rounded-md border border-zinc-200' }, tx.transactions.map(transactionRow)),
+      tx.more && h('p', { class: 'mt-2 max-w-prose text-sm text-zinc-500', text: t('transactionsMore', { n: tx.transactions.length }) }),
+    ]);
+  }
+  return h('div', {}, [settingsHeading(t('transactionHistory')), h('div', { class: 'mt-3' }, body)]);
+}
+
+// Static parts of the Account tab: the profile, or the guest's way to an account
+function renderSettingsAccount() {
+  if ($('#settings-guest-title')) {
+    $('#settings-guest-title').textContent = t('guestAccountTitle', { app: document.body.dataset.appName });
+    $('#settings-guest-body').textContent = t('guestAccountBody', { hours: GUEST_HOURS });
+  }
+  if (!profile) return;
+  renderProfile();
+  renderAccountButtons();
+}
+
+// The name and email address as they are now, here and on the sidebar's badge, and an email change waiting for its link
+function renderProfile() {
+  const shown = profile.name || profile.email;
+  $('#profile-name').textContent = shown;
+  $('#profile-email').textContent = profile.email;
+  show($('#profile-email'), !!profile.name);
+  $('#profile-initial').textContent = shown.charAt(0).toUpperCase();
+  $('#account-initial').textContent = shown.charAt(0).toUpperCase();
+  $('#account-name').textContent = shown;
+  $('#account-btn').setAttribute('aria-label', t('badgeLabel', { name: shown }));
+  show($('#email-pending'), !!profile.pendingEmail);
+  $('#email-pending-text').textContent = profile.pendingEmail ? t('emailPending', { email: profile.pendingEmail, current: profile.email }) : '';
+}
+
+// Every control of the tab is disabled while one of its requests is in flight
+function renderAccountButtons() {
+  setButtonBusy($('#name-start'), false, t('changeName'), '', 'pencil');
+  setButtonBusy($('#name-save'), accountBusy === 'name', t('save'), t('saving'));
+  setButtonBusy($('#email-start'), false, t('changeEmail'), '', 'envelope');
+  setButtonBusy($('#email-save'), accountBusy === 'email', t('sendLink'), t('sendingLink'));
+  setButtonBusy($('#email-cancel'), accountBusy === 'email-cancel', t('cancelEmailChange'), t('canceling'));
+  setButtonBusy($('#password-start'), false, t('changePassword'), '', 'key');
+  setButtonBusy($('#password-save'), accountBusy === 'password', t('savePassword'), t('saving'));
+  setButtonBusy($('#export-data'), accountBusy === 'export', t('exportData'), t('exporting'), 'arrow-to-bottom-stroke');
+  setButtonBusy($('#delete-start'), false, t('deleteAccountStart'), '', 'trash');
+  setButtonBusy($('#delete-confirm'), accountBusy === 'delete', t('deleteConfirm'), t('deletingAccount'), 'trash');
+  $('#settings-account').querySelectorAll('button, input').forEach((el) => { el.disabled = !!accountBusy; });
+  if (!accountBusy) passwordChecks?.(); // Save new password, only once the new one meets every rule
+}
+
+// The tab's forms: start, the button that opens one; hides, what it opens in place of; field, where the cursor goes
+const ACCOUNT_FORMS = {
+  name: { start: 'name-start', hides: 'profile-actions', field: 'name-input' },
+  email: { start: 'email-start', hides: 'profile-actions', field: 'email-input' },
+  password: { start: 'password-start', hides: 'password-start', field: 'current-password' },
+  delete: { start: 'delete-start', hides: 'delete-start', field: 'delete-password' },
+};
+
+// Opens one of the forms (null: none), closing any other. Each one opens empty (the name: as it is now), so nothing
+// typed into a form that was closed lingers in it, passwords least of all.
+function openAccountForm(which) {
+  const hidden = which && ACCOUNT_FORMS[which].hides;
+  for (const [key, f] of Object.entries(ACCOUNT_FORMS)) {
+    const form = $(`#${key}-form`);
+    form.reset();
+    setFormError(key, null);
+    show(form, key === which);
+    show($(`#${f.hides}`), f.hides !== hidden);
+  }
+  $('#name-input').value = profile.name;
+  passwordChecks?.();
+  if (which) $(`#${ACCOUNT_FORMS[which].field}`).focus();
+}
+
+function closeAccountForm(which) {
+  openAccountForm(null);
+  $(`#${ACCOUNT_FORMS[which].start}`).focus();
+}
+
+// What's wrong (null: nothing), under a form's fields, with the cursor in the field it's about
+function setFormError(which, text, fieldId = ACCOUNT_FORMS[which].field) {
+  const form = $(`#${which}-form`);
+  show($(`#${which}-error`), !!text);
+  $(`#${which}-error`).textContent = text || '';
+  form.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+  if (!text) return;
+  const field = $(`#${fieldId}`);
+  field.setAttribute('aria-invalid', 'true');
+  field.focus();
+  field.select();
+}
+
+// One of the forms' requests, as accountBusy `kind`. Resolves to its answer, or to null once its error is shown under
+// the form (fieldFor: the field an error code is about, when it isn't the form's first).
+async function accountRequest(kind, which, request, fieldFor = {}) {
+  accountBusy = kind;
+  renderAccountButtons();
+  let data = null;
+  let error = null;
+  try {
+    data = await request();
+  } catch (err) {
+    error = err;
+  }
+  accountBusy = null;
+  renderAccountButtons();
+  if (error) setFormError(which, errorText(error), fieldFor[error.code]);
+  return error ? null : data;
+}
+
+async function saveName(e) {
+  e.preventDefault();
+  if (accountBusy) return;
+  const name = $('#name-input').value.replace(/\s+/g, ' ').trim();
+  if (!name) return setFormError('name', t('enterName'));
+  if (name !== profile.name) {
+    const data = await accountRequest('name', 'name', () => api('PATCH', '/account', { name }));
+    if (!data) return;
+    profile.name = data.name;
+    renderProfile();
+    toast(t('nameSaved'), 'ok');
+  }
+  closeAccountForm('name');
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // as the server checks it (middleware/auth.js)
+
+// The new address only waits for its link (POST /api/account/email); the account keeps its own until it's used
+async function changeEmail(e) {
+  e.preventDefault();
+  if (accountBusy) return;
+  const email = $('#email-input').value.trim().toLowerCase();
+  const password = $('#email-password').value;
+  if (!EMAIL.test(email)) return setFormError('email', t('enterEmail'));
+  if (email === profile.email) return setFormError('email', t('errors.same_email'));
+  if (!password) return setFormError('email', t('enterPassword'), 'email-password');
+  const data = await accountRequest('email', 'email', () => api('POST', '/account/email', { email, password }), {
+    wrong_password: 'email-password',
+    too_many_attempts: 'email-password',
+  });
+  if (!data) return;
+  profile.pendingEmail = data.pendingEmail;
+  renderProfile();
+  closeAccountForm('email');
+  toast(t('emailLinkSent', { email: data.pendingEmail }), 'ok');
+}
+
+async function cancelEmailChange() {
+  if (accountBusy) return;
+  accountBusy = 'email-cancel';
+  renderAccountButtons();
+  try {
+    await api('DELETE', '/account/email');
+    profile.pendingEmail = null;
+    toast(t('emailChangeCanceled'), 'ok');
+  } catch (err) {
+    fail(err);
+  }
+  accountBusy = null;
+  renderAccountButtons();
+  renderProfile();
+  if (!profile.pendingEmail) $('#email-start').focus(); // the notice it was in is gone
+}
+
+// Logs out the account's other devices; this one stays logged in (POST /api/account/password)
+async function changePassword(e) {
+  e.preventDefault();
+  if (accountBusy) return;
+  const password = $('#current-password').value;
+  const newPassword = $('#new-password').value;
+  if (!password) return setFormError('password', t('enterPassword'));
+  const data = await accountRequest('password', 'password', () => api('POST', '/account/password', { password, newPassword }), {
+    weak_password: 'new-password',
+  });
+  if (!data) return;
+  closeAccountForm('password');
+  toast(t('passwordSaved'), 'ok');
+}
+
+// The file and its name come from the server (GET /api/account/export)
+async function exportAccount() {
+  accountBusy = 'export';
+  renderAccountButtons();
+  try {
+    const res = await fetch('/api/account/export').catch(() => { throw Object.assign(new Error('network'), { code: 'network' }); });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(data.message || res.statusText), { code: data.error || 'generic', data });
+    }
+    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'data.json';
+    const url = URL.createObjectURL(await res.blob());
+    // Inside the dialog: everything outside a modal is inert
+    const a = h('a', { href: url, download: name, hidden: true });
+    $('#settings-dialog').append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {
+    fail(err);
+  } finally {
+    accountBusy = null;
+    renderAccountButtons();
+  }
+}
+
+async function deleteAccount(e) {
+  e.preventDefault();
+  if (accountBusy) return;
+  const password = $('#delete-password').value;
+  if (!password) return setFormError('delete', t('enterPassword'));
+  if (!(await accountRequest('delete', 'delete', () => api('DELETE', '/account', { password })))) return;
+  // Nothing of the account is left to save into
+  clearTimeout(saveTimer);
+  pendingPatch = null;
+  accountDeleted = true;
+  if (!$('#settings-dialog').open) return location.assign('/app'); // closed meanwhile (some browsers let Escape through)
+  show($('#settings-main'), false);
+  show($('#settings-deleted'), true);
+  $('#settings-deleted-ok').focus();
+}
+
+function bindSettings() {
+  const badge = $('#account-btn');
+  badge.setAttribute('aria-label', t('badgeLabel', { name: $('#account-name').textContent.trim() })); // the name it shows, then what it does
+  badge.addEventListener('click', () => openSettings());
+
+  const dialog = $('#settings-dialog');
+  $('#settings-close').addEventListener('click', closeSettings);
+  dialog.addEventListener('cancel', (e) => { e.preventDefault(); closeSettings(); }); // Escape
+  dialog.addEventListener('close', onSettingsClosed);
+  // A click on the backdrop closes it; one that only ends there (selecting text, say) doesn't
+  let downOnBackdrop = false;
+  dialog.addEventListener('pointerdown', (e) => { downOnBackdrop = e.target === dialog; });
+  dialog.addEventListener('click', (e) => { if (e.target === dialog && downOnBackdrop) closeSettings(); });
+
+  const tabs = [...document.querySelectorAll('[data-settings-tab]')];
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => setSettingsTab(tab.dataset.settingsTab));
+    tab.addEventListener('keydown', (e) => {
+      const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+      if (!d) return;
+      e.preventDefault();
+      const next = tabs[(i + d + tabs.length) % tabs.length];
+      setSettingsTab(next.dataset.settingsTab);
+      next.focus();
+    });
+  });
+
+  if (profile) {
+    // A global of password.js's (a const: not on window)
+    if (typeof PasswordStrength !== 'undefined') passwordChecks = PasswordStrength.watch($('#new-password-hint'), $('#new-password'));
+    for (const [key, f] of Object.entries(ACCOUNT_FORMS)) {
+      const form = $(`#${key}-form`);
+      $(`#${f.start}`).addEventListener('click', () => openAccountForm(key));
+      form.querySelector('[data-account-cancel]').addEventListener('click', () => closeAccountForm(key));
+      form.addEventListener('input', () => setFormError(key, null));
+    }
+    $('#name-form').addEventListener('submit', saveName);
+    $('#email-form').addEventListener('submit', changeEmail);
+    $('#email-cancel').addEventListener('click', cancelEmailChange);
+    $('#password-form').addEventListener('submit', changePassword);
+    $('#export-data').addEventListener('click', exportAccount);
+    $('#delete-form').addEventListener('submit', deleteAccount);
+    $('#settings-deleted-ok').addEventListener('click', closeSettings);
+  }
+  // Come back to the same session after signing up or logging in
+  document.querySelectorAll('[data-keep-place]').forEach((a) => a.addEventListener('click', () => {
+    a.href = `${a.pathname}?next=${encodeURIComponent(location.pathname + location.search)}`;
+  }));
+  languagePicker = customSelect($('#pref-language'));
+  $('#pref-language').addEventListener('change', onPrefLanguage);
+  document.querySelectorAll('input[name="graph-layout"]').forEach((r) => r.addEventListener('change', onPrefGraph));
+  document.querySelectorAll('input[name="theme"]').forEach((r) => r.addEventListener('change', onPrefTheme));
+  renderSettingsAccount();
 }
 
 const panelMinimized = () => $('#workflow').dataset.min === 'true';
@@ -1633,8 +2473,10 @@ const panelMinimized = () => $('#workflow').dataset.min === 'true';
 function renderMinimize() {
   const min = panelMinimized();
   const btn = $('#wf-min');
-  const label = min ? t('expandPanel') : t('minimize');
-  btn.replaceChildren(icon(min ? 'chevrons-down' : 'chevrons-up', 20));
+  const hint = min && newWordsHint();
+  const action = min ? t('expandPanel') : t('minimize');
+  const label = hint ? `${action} (${hint})` : action;
+  btn.replaceChildren(...[icon(min ? 'chevrons-down' : 'chevrons-up', 20), hint && newWordsDot('bg-cerise-600')].filter(Boolean));
   btn.setAttribute('aria-expanded', String(!min));
   btn.setAttribute('aria-label', label);
   btn.title = label;
@@ -1826,7 +2668,9 @@ function renderPanel() {
         header,
         panelButton(w.selected ? t('deselect') : t('select'), w.selected ? 'checkbox' : 'checkbox-checked', () => patchWord(w._id, { selected: !w.selected })),
         panelButton(t('rename'), 'edit', () => { p.mode = 'rename'; renderPanel(); $('#panel input')?.select(); }),
-        panelBusyButton(t('expand'), 'git-branch', t('expanding'), busy, !llm, () => expandWord(w._id)),
+        wordDepth(w) >= EXPAND_DEPTH
+          ? panelButton(t('expandTooDeep'), 'git-branch', null, { disabled: true })
+          : panelBusyButton(t('expand'), 'git-branch', t('expanding'), busy, !llm, () => expandWord(w._id)),
         panelButton(t('delete'), 'trash', () => deleteWord(w._id), { danger: true }),
       ];
     }
@@ -1917,11 +2761,25 @@ function bindStatic() {
     if (e.key === 'Escape') { e.stopPropagation(); setSessionSearch(false); $('#session-search-btn').focus(); }
   });
   $('#drawer-open').addEventListener('click', () => (isDesktop() ? setSidebar(true) : openDrawer()));
+  // "Open in another tab": the menu button is behind it, so it has its own way to the sessions
+  $('#elsewhere-sessions').addEventListener('click', () => (isDesktop() ? setSidebar(true) : openDrawer()));
+  $('#elsewhere-use').addEventListener('click', useHere);
   $('#drawer-close').addEventListener('click', closeDrawer);
   $('#drawer-backdrop').addEventListener('click', closeDrawer);
   $('#sidebar-collapse').addEventListener('click', () => setSidebar(false));
   $('#wf-min').addEventListener('click', () => setMinimized(!panelMinimized()));
-  $('#account-btn')?.addEventListener('click', () => toggleAccount());
+  bindSettings();
+  // Log out asks first; then whatever is still waiting to be saved goes before the login ends
+  $('#logout-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const app = document.body.dataset.appName;
+    if (!(await askConfirm({ title: t('logOutTitle', { app }), body: t('logOutBody'), action: t('logOut') }))) return;
+    await flushSave();
+    e.target.submit();
+  });
+  document.querySelectorAll('dialog').forEach((d) => d.addEventListener('close', () => {
+    if (d.contains($('#toasts'))) document.body.append($('#toasts')); // toast() moved them in
+  }));
   // Come back to the same session after logging in
   $('#account-login')?.addEventListener('click', (e) => {
     e.currentTarget.href = `/app/login?next=${encodeURIComponent(location.pathname + location.search)}`;
@@ -1950,12 +2808,15 @@ function bindStatic() {
     queueSave({ title, titleSource: state.session.titleSource });
   });
 
-  $('#language').addEventListener('change', (e) => {
-    const lang = e.target.value;
-    state.session.language = lang;
-    state.langHint = words().length > 0;
-    queueSave({ language: lang });
-    renderBanners();
+  sessionLanguagePicker = customSelect($('#language'), { compact: true, fit: true });
+  modelPicker = customSelect($('#model'), { compact: true });
+  // Saved right away and on its own: if the server refuses it (words made in another tab), nothing else is lost
+  $('#language').addEventListener('change', async (e) => {
+    state.session.language = e.target.value;
+    renderRealOnly();
+    await flushSave();
+    queueSave({ language: state.session.language });
+    flushSave();
   });
 
   $('#model').addEventListener('change', (e) => {
@@ -1963,7 +2824,6 @@ function bindStatic() {
     queueSave({ model: e.target.value });
   });
 
-  $('#banner-lang-close').addEventListener('click', () => { state.langHint = false; renderBanners(); });
   document.querySelectorAll('.banner-retry').forEach((b) => b.addEventListener('click', async () => {
     await recheckHealth();
     if (!state.health.db || !state.health.llm) toast(t(state.health.db ? 'llmDown' : 'dbDown'));
@@ -1997,16 +2857,16 @@ function bindStatic() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if ($('#account-menu') && !$('#account-menu').hidden) { toggleAccount(false); $('#account-btn').focus(); return; }
+    if (document.querySelector('dialog[open]')) return; // the dialog handles its own Escape
     if (!$('#options-menu').hidden) { toggleOptions(false); $('#options-btn').focus(); return; }
     if (state.panel) { closePanel(); return; }
     closeDrawer();
     if (!isDesktop() && sheet.snap !== 'peek') setSheet('peek');
   });
   document.addEventListener('pointerdown', (e) => {
-    if ($('#account-menu') && !$('#account-menu').hidden && !e.target.closest('#account-menu, #account-btn')) toggleAccount(false);
     if (!$('#options-menu').hidden && !e.target.closest('#acronym-options')) toggleOptions(false);
-    if (!state.panel) return;
+    // A dialog over the popover asks about it (Delete this word?): answering it isn't a click away
+    if (!state.panel || e.target.closest('dialog')) return;
     const panel = $('#panel');
     if (panel.contains(e.target) || e.target.closest('#graph') || state.panel.anchor?.contains(e.target)) return;
     closePanel();

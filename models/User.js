@@ -15,7 +15,9 @@ const SubscriptionSchema = new Schema(
     customerId: String,
     subscriptionId: String,
     status: String, // the provider's own: active, trialing, past_due, canceled…
-    currentPeriodEnd: Date,
+    startedAt: Date, // when the subscription began
+    currentPeriodEnd: Date, // when it renews, or ends if cancelAtPeriodEnd
+    cancelAtPeriodEnd: Boolean, // canceled, but paid up until currentPeriodEnd
   },
   { _id: false }
 );

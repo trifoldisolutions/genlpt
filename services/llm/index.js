@@ -1,6 +1,7 @@
 // Provider-agnostic LLM facade. Add a provider as services/llm/<name>.js exposing
-// listModels() → [{ name }], defaultModel(), guestModel(), ping(), chat({ model, messages, temperature }) →
-// { text, usage } and concurrency (how many requests it serves at once); optionally settings(model).
+// listModels() → [{ name }], defaultModel(), guestModel(), ping(plan), chat({ model, messages, temperature, plan })
+// → { text, usage } and concurrency (how many requests it serves at once); optionally settings(model). plan: the
+// plan the call is made for (guest, free, paid, or null), when the provider bills each plan separately.
 // usage: { inputTokens, outputTokens (reasoning included), reasoningTokens, cachedTokens, cost (USD) },
 // plus rateLimitRetries and waitMs when the provider waits out rate limits; a failed call may carry err.usage.
 // Provider: openrouter (hosted), the only one so far; LLM_PROVIDER would pick another added here.
@@ -89,39 +90,44 @@ function listModels() {
   return provider().listModels();
 }
 
-// The provider's ping, shared: callers meanwhile wait for the same one, and its answer is kept a while. The
-// public /api/health asks on every visit, so visitors must not each cost a call to the provider; a recovery
+// The provider's ping for a plan, shared: callers meanwhile wait for the same one, and its answer is kept a while.
+// The public /api/health asks on every visit, so visitors must not each cost a call to the provider; a recovery
 // still shows within PING_DOWN_MS.
 const PING_UP_MS = 60 * 1000;
 const PING_DOWN_MS = 10 * 1000;
-let lastPing = null; // { provider, answer (a promise), until }
+const lastPings = new Map(); // "<provider>:<plan>" → { answer (a promise), until }
 
-function isAvailable() {
-  const name = providerName();
-  if (lastPing?.provider !== name || Date.now() >= lastPing.until) {
-    const ping = { provider: name, until: Infinity };
-    ping.answer = Promise.resolve()
-      .then(() => provider().ping())
+function isAvailable(plan = null) {
+  const id = `${providerName()}:${plan || ''}`;
+  let ping = lastPings.get(id);
+  if (!ping || Date.now() >= ping.until) {
+    const fresh = { until: Infinity };
+    fresh.answer = Promise.resolve()
+      .then(() => provider().ping(plan))
       .then(() => true, () => false)
       .then((ok) => {
-        ping.until = Date.now() + (ok ? PING_UP_MS : PING_DOWN_MS);
+        fresh.until = Date.now() + (ok ? PING_UP_MS : PING_DOWN_MS);
         return ok;
       });
-    lastPing = ping;
+    lastPings.set(id, fresh);
+    ping = fresh;
   }
-  return lastPing.answer;
+  return ping.answer;
 }
 
-// One provider call, recorded on the current meter (meter.js) with what it used, whether it answers or fails
+// One provider call, recorded on the current meter (meter.js) with what it used, whether it answers or fails.
+// It goes through the key of the meter's plan.
 async function meteredChat(p, { step, retry, ...args }) {
   const started = Date.now();
   const call = { step: step || 'other', model: args.model, retry };
   try {
-    const { text, usage } = await p.chat(args);
+    const { text, usage } = await p.chat({ ...args, plan: meter.current()?.plan || null });
     meter.record({ ...call, ok: true, ms: Date.now() - started, ...usage });
     return text;
   } catch (err) {
     meter.record({ ...call, ok: false, error: err.code || 'llm_error', ms: Date.now() - started, ...err.usage });
+    // Users only see that AI is paused or unavailable: what to fix (a spent key, a bad key) is for the server log
+    if (err.code === 'ai_paused' || err.code === 'llm_unavailable') console.error(`[llm] ${meter.current()?.plan || 'no plan'}: ${err.message}`);
     throw err;
   }
 }

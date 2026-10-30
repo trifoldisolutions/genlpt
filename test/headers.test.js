@@ -33,9 +33,9 @@ test('security headers: nosniff, HSTS, framing and referrer rules are sent', asy
   assert.equal(h.get('x-powered-by'), null);
 });
 
-test('CSP: scripts from this site and the iconify-icon package only, not all of jsDelivr', async () => {
+test('CSP: scripts from this site, the iconify-icon package (not all of jsDelivr) and Turnstile only', async () => {
   const csp = cspOf(await headersOf());
-  assert.deepEqual(csp['script-src'], ["'self'", 'https://cdn.jsdelivr.net/npm/iconify-icon@2/']);
+  assert.deepEqual(csp['script-src'], ["'self'", 'https://cdn.jsdelivr.net/npm/iconify-icon@2/', 'https://challenges.cloudflare.com']);
   assert.deepEqual(csp['script-src-attr'], ["'none'"]);
   assert.deepEqual(csp['object-src'], ["'none'"]);
 });
@@ -45,6 +45,11 @@ test('CSP: icons can be fetched from the Iconify API and its backup hosts', asyn
   for (const host of ['https://api.iconify.design', 'https://api.simplesvg.com', 'https://api.unisvg.com']) {
     assert.ok(csp['connect-src'].includes(host), host);
   }
+});
+
+test("CSP: signup's bot check can show its frame, and no other site's", async () => {
+  const csp = cspOf(await headersOf());
+  assert.deepEqual(csp['frame-src'], ["'self'", 'https://challenges.cloudflare.com']);
 });
 
 test('CSP: Google Fonts stylesheets and font files are allowed', async () => {

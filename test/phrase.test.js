@@ -22,6 +22,31 @@ test('English name: FBI', () => {
   assert.deepEqual(out.map((p) => `${p.lead}|${p.form}`), ['|Federal', '|Bureau', 'of|Investigation']);
 });
 
+test('Spanish names: ONCE, MERCOSUR in chunks; a list or an enumeration is not a name', () => {
+  const ONCE = parts(['O', 'Organización'], ['N', 'Nación'], ['C', 'Ciego'], ['E', 'España']);
+  const out = phraseParts(ONCE, 'Organización Nacional de Ciegos Españoles', 'es');
+  assert.deepEqual(out.map((p) => `${p.lead}|${p.form}`), ['|Organización', '|Nacional', 'de|Ciegos', '|Españoles']);
+  const MERCOSUR = parts(['MER', 'Mercado'], ['CO', 'Común'], ['SUR', 'Sur']);
+  assert.deepEqual(phraseParts(MERCOSUR, 'Mercado Común del Sur', 'es').map((p) => p.lead), ['', '', 'del']);
+  assert.equal(phraseParts(ONCE, 'Organización Nacional Ciegos Españoles', 'es'), null);
+  assert.equal(phraseParts(ONCE, 'Organización, Nación, Ciegos y España', 'es'), null);
+  // "Para" is a connector: it can't carry the P
+  assert.equal(phraseParts(parts(['O', 'Organización'], ['P', 'Proximidad']), 'Organización Para', 'es'), null);
+});
+
+test('Haitian Creole names: a noun chain is grammatical, an enumeration is not', () => {
+  const AKA = parts(['A', 'Akademi'], ['K', 'Kreyòl'], ['A', 'Ayiti']);
+  assert.deepEqual(phraseParts(AKA, 'Akademi Kreyòl Ayisyen', 'ht').map((p) => p.form), ['Akademi', 'Kreyòl', 'Ayisyen']);
+  const KLEF = parts(['K', 'Kilti'], ['L', 'Lekti'], ['E', 'Echanj'], ['F', 'Fanmi']);
+  assert.deepEqual(phraseParts(KLEF, 'Kilti Lekti ak Echanj nan Fanmi', 'ht').map((p) => p.lead), ['', '', 'ak', 'nan']);
+  // A possessor follows its noun with no linking word: four nouns in a row pass in Creole, not in French
+  assert.ok(phraseParts(KLEF, 'Kilti Lekti Echanj Fanmi', 'ht'));
+  assert.equal(phraseParts(KLEF, 'Kilti Lekti Echanj Fanmi', 'fr'), null);
+  assert.equal(phraseParts(KLEF, 'Kilti, Lekti, Echanj ak Fanmi', 'ht'), null);
+  // "Men" (hand) and "San" (blood) are nouns too, so they can carry a letter
+  assert.ok(phraseParts(parts(['M', 'Men'], ['S', 'San']), 'Men San', 'ht'));
+});
+
 test('a connector can never carry a letter', () => {
   // "Organisation Pour l'Unité Sociale": "Pour" would carry the P
   const withPour = parts(['O', 'Organisation'], ['P', 'Proximité'], ['U', 'Unité'], ['S', 'Social']);
@@ -90,4 +115,18 @@ test('connector lists: prompt examples are all accepted connectors, accents matt
   assert.equal(isConnector('Sur'), true);
   assert.deepEqual(splitTokens("l’Unité d'Aide"), ['l’', 'Unité', "d'", 'Aide']);
   assert.deepEqual(splitTokens("People's Hub", 'en'), ["People's", 'Hub']);
+});
+
+test('every session language has connectors and prompts; the client mirrors which ones have a word list', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { LANGUAGES } = require('../models/BrainstormSession');
+  const { QUESTIONS } = require('../services/llm/prompts');
+  const { CONNECTORS } = require('../services/acronym/normalize');
+  const dictionary = require('../services/acronym/dictionary');
+  for (const l of LANGUAGES) assert.ok(CONNECTORS[l] && CONNECTOR_EXAMPLES[l] && QUESTIONS[l], l);
+  const app = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
+  const mirrored = JSON.parse(app.match(/DICTIONARY_LANGUAGES = new Set\((\[.*?\])\)/)[1].replace(/'/g, '"'));
+  assert.deepEqual(mirrored, LANGUAGES.filter(dictionary.has));
+  assert.equal(dictionary.has('ht'), false);
 });

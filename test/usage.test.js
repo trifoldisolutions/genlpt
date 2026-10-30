@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { planOf, toView, rankRun, splitAcronyms } = require('../services/usage');
+const { planOf, planDetails, toView, rankRun, splitAcronyms } = require('../services/usage');
 const { PLAN_LIMITS } = require('../config/limits');
+const { PLAN_PRICES } = require('../config/pricing');
+const { GUEST_COOKIE } = require('../middleware/owner');
 const { reformulateAnswer, QUESTIONS } = require('../services/llm/prompts');
 
 const HOUR = 60 * 60 * 1000;
@@ -11,6 +13,33 @@ test('the plan comes from the account: none is a guest, admin is a role and gets
   assert.equal(planOf({ user: { plan: 'free' } }), 'free');
   assert.equal(planOf({ user: { plan: 'paid' } }), 'paid');
   assert.equal(planOf({ user: { plan: 'free', role: 'admin' } }), 'free');
+});
+
+test('billing: guests and free accounts pay nothing, the paid plan has a monthly price', () => {
+  assert.equal(PLAN_PRICES.guest, null);
+  assert.equal(PLAN_PRICES.free, null);
+  assert.ok(PLAN_PRICES.paid.amount > 0);
+  assert.equal(PLAN_PRICES.paid.interval, 'month');
+  assert.match(PLAN_PRICES.paid.currency, /^[A-Z]{3}$/);
+});
+
+test('billing: each plan says when it began and when its period ends', () => {
+  const start = 1792900000000;
+  const guest = planDetails({ user: null, headers: { cookie: `${GUEST_COOKIE}=${'a'.repeat(43)}.${start}` } });
+  assert.deepEqual(guest, { plan: 'guest', price: null, startedAt: new Date(start), periodEnd: null, renews: false });
+  assert.equal(planDetails({ user: null, headers: {} }).startedAt, null, 'no guest cookie yet');
+
+  const createdAt = new Date('2026-10-02T09:00:00Z');
+  assert.deepEqual(planDetails({ user: { plan: 'free', createdAt } }), { plan: 'free', price: null, startedAt: createdAt, periodEnd: null, renews: false });
+
+  const startedAt = new Date('2026-10-25T00:00:00Z');
+  const currentPeriodEnd = new Date('2026-11-25T00:00:00Z');
+  const paid = (subscription) => planDetails({ user: { plan: 'paid', createdAt, subscription } });
+  assert.deepEqual(paid({ status: 'active', startedAt, currentPeriodEnd }), { plan: 'paid', price: PLAN_PRICES.paid, startedAt, periodEnd: currentPeriodEnd, renews: true });
+  assert.equal(paid({ status: 'active', startedAt, currentPeriodEnd, cancelAtPeriodEnd: true }).renews, false, 'canceled: ends then');
+  assert.equal(paid({ status: 'canceled', startedAt, currentPeriodEnd }).renews, false);
+  // Paid without a subscription on record (set by hand): no dates to show
+  assert.deepEqual(paid(undefined), { plan: 'paid', price: PLAN_PRICES.paid, startedAt: null, periodEnd: null, renews: false });
 });
 
 test('limits grow with the plan', () => {
@@ -38,7 +67,7 @@ test('reformulations are counted per session, in the open window only', () => {
 
 test('the reformulation prompt rewrites one answer from the project idea: all answers, plus the title if any', () => {
   const answers = { who: 'A naming tool', what: 'it make acronym for project', how: '', why: '' };
-  for (const language of ['fr', 'en']) {
+  for (const language of ['fr', 'en', 'es', 'ht']) {
     const p = reformulateAnswer({ language, branch: 'what', answers, title: 'Acronym Studio', minChars: 100, maxChars: 500 });
     assert.ok(p.user.includes('A naming tool'), language); // another answer, as context
     assert.ok(p.user.includes('it make acronym for project'), language);

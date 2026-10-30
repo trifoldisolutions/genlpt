@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const session = require('express-session');
 const { MongoStore } = require('connect-mongo');
 const User = require('../models/User');
-const { LOGIN_DAYS, PASSWORD_MIN_CHARS, PASSWORD_MAX_CHARS } = require('../config/limits');
+const { rules: passwordRules } = require('../public/js/password');
+const { LOGIN_DAYS, PASSWORD_MIN_EACH, PASSWORD_MAX_CHARS } = require('../config/limits');
 const { cookieOptions } = require('../config/cookies');
 
 // Logins: an httpOnly cookie "sid" naming a server-side session in MongoDB (login_sessions) that holds only
@@ -57,12 +58,13 @@ async function sessions(req, res, next) {
   sessionMiddleware(req, res, next);
 }
 
-// req.user for routes and res.locals.user for views: { _id, name, email, role, plan }, or null for a guest
+// req.user for routes and res.locals.user for views: { _id, name, email, role, plan, subscription, createdAt },
+// or null for a guest
 async function loadUser(req, res, next) {
   req.user = null;
   const id = req.session?.userId;
   if (id) {
-    req.user = await User.findById(id, { name: 1, email: 1, role: 1, plan: 1 }).lean();
+    req.user = await User.findById(id, { name: 1, email: 1, role: 1, plan: 1, subscription: 1, createdAt: 1 }).lean();
     if (!req.user) delete req.session.userId; // the account is gone
   }
   res.locals.user = req.user;
@@ -81,7 +83,7 @@ async function signOut(req, res) {
   res.clearCookie(SESSION_COOKIE, cookieOptions());
 }
 
-// Ends every login of this account, on every device (after a password reset)
+// Ends every login of this account, on every device (after a password reset or change)
 async function signOutEverywhere(userId) {
   const id = String(userId);
   if (!/^[a-f0-9]{24}$/.test(id)) throw new Error('bad user id');
@@ -113,17 +115,24 @@ const normalizeEmail = (value) => (typeof value === 'string' ? value.trim().toLo
 const cleanName = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
 
 const emailProblem = (email) => (email.length > 254 || !EMAIL.test(email) ? 'Please enter a valid email address.' : null);
+const nameProblem = (name) => (!name || name.length > 80 ? 'Please enter your name (80 characters max).' : null);
 
+// The kinds of characters a new password needs, in the words of the message ("3 lowercase letters, …")
+const KIND_NAMES = { lower: 'lowercase letters', upper: 'uppercase letters', digit: 'numbers', symbol: 'special characters' };
+const listed = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : items[0]);
+
+// A new password's first problem (signup, reset), as a message for the form, or null. The page checks the same
+// rules as it's typed (public/js/password.js); this is what holds.
 function passwordProblem(password) {
-  if (password.length < PASSWORD_MIN_CHARS) return `Your password needs at least ${PASSWORD_MIN_CHARS} characters.`;
   if (password.length > PASSWORD_MAX_CHARS) return `Your password can have at most ${PASSWORD_MAX_CHARS} characters.`;
-  return null;
+  if (passwordRules(password, { each: PASSWORD_MIN_EACH }).every((r) => r.met)) return null;
+  const kinds = listed(Object.entries(PASSWORD_MIN_EACH).map(([kind, n]) => `${n} ${KIND_NAMES[kind]}`));
+  return `Your password needs at least ${kinds} (like ! ? # $).`;
 }
 
 // The first problem with a signup, as a message for the form, or null
 function signupProblem({ name, email, password }) {
-  if (!name || name.length > 80) return 'Please enter your name (80 characters max).';
-  return emailProblem(email) || passwordProblem(password);
+  return nameProblem(name) || emailProblem(email) || passwordProblem(password);
 }
 
 module.exports = {
@@ -136,6 +145,7 @@ module.exports = {
   normalizeEmail,
   cleanName,
   emailProblem,
+  nameProblem,
   passwordProblem,
   signupProblem,
   SESSION_COOKIE,

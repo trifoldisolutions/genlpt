@@ -6,8 +6,10 @@ const { normalizeLetters, splitTokens, isConnector, isCoordinator } = require('.
 const ROOT_LETTERS = 3; // a reshaped word keeps this many leading letters of the original
 // From this many letter-carrying words, a name needs a preposition or article linking a head to its
 // complements: without one it is a keyword list ("Outil Partage Unité Simplicité") or an enumeration
-// ("Vitalité, Engagement, Lien et Événements"). English stacks nouns more readily ("International Business Machines").
-const CONNECTOR_NEEDED_FROM = { fr: 3, en: 4 };
+// ("Vitalité, Engagement, Lien et Événements"). Spanish links with de/para like French; English stacks nouns
+// more readily ("International Business Machines"). Haitian Creole puts a possessor right after its noun, with
+// no linking word ("Bank Repiblik Ayiti"), so a noun chain is grammatical there.
+const CONNECTOR_NEEDED_FROM = { fr: 3, en: 4, es: 3, ht: 5 };
 
 // Connectors and letterless tokens ("&", "–") carry no letter.
 const isFiller = (token, language) => !normalizeLetters(token) || isConnector(token, language);
