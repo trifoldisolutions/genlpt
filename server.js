@@ -1,5 +1,5 @@
 // override: .env wins over inherited env (e.g. a stale PORT injected into VS
-// Code terminals), so the port always follows project-ports.json.
+// Code terminals), so the port always follows Dispatch's registry.
 require('dotenv').config({ override: true });
 
 const path = require('path');

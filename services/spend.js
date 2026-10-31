@@ -30,9 +30,12 @@ async function check(plan, now = new Date()) {
   return { paused: pausedAt(plan, day?.cost || 0), resetAt: dayEnd(now) };
 }
 
-// ALERT_EMAIL (several: comma-separated), or every admin's address
+// ALERT_EMAIL's addresses (several: comma-separated)
+const alertAddresses = () => (process.env.ALERT_EMAIL || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// ALERT_EMAIL, or every admin's address
 async function recipients() {
-  const listed = (process.env.ALERT_EMAIL || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const listed = alertAddresses();
   if (listed.length) return listed;
   return (await User.find({ role: 'admin' }, { email: 1 }).lean()).map((u) => u.email);
 }
@@ -64,4 +67,4 @@ async function add(plan, cost, now = new Date()) {
   }
 }
 
-module.exports = { check, add, dayOf, dayEnd, pausedAt, linesReached };
+module.exports = { check, add, dayOf, dayEnd, pausedAt, linesReached, alertAddresses };

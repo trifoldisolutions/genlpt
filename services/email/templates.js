@@ -123,8 +123,9 @@ function accountDeleted() {
 }
 
 // Not an account email: to the team (ALERT_EMAIL or the admins), the first time a day's AI spend crosses a line
-// of DAILY_SPEND (config/limits.js). line: 'warning', 'guest' or 'free'.
-function spendAlert({ line, cost, byPlan, limits }) {
+// of DAILY_SPEND (config/limits.js). line: 'warning', 'guest' or 'free'. test: sent by npm run alert:test, to check
+// alerts reach their inbox, and says so.
+function spendAlert({ line, cost, byPlan, limits, test = false }) {
   const usd = (n) => `$${(n || 0).toFixed(2)}`; // what was spent
   const at = (n) => `$${Number.isInteger(n) ? n : n.toFixed(2)}`; // a line
   const { guest, free } = limits.pause;
@@ -138,7 +139,8 @@ function spendAlert({ line, cost, byPlan, limits }) {
     guest: `Guests can't use AI until midnight UTC. Free accounts will be paused at ${at(free)}.`,
     free: 'Guests and free accounts can\'t use AI until midnight UTC. Paid accounts keep going.',
   }[line];
-  return compose(subject, [
+  return compose(test ? `[Test] ${subject}` : subject, [
+    ...(test ? ['This is a test of the daily AI spend alerts: nothing was spent and nothing is paused. A real alert looks like the rest of this email.'] : []),
     `Today's AI spend is ${usd(cost)} since midnight UTC. ${next}`,
     `By plan: guests ${usd(byPlan.guest)}, free accounts ${usd(byPlan.free)}, paid accounts ${usd(byPlan.paid)}.`,
     'These lines are DAILY_SPEND in config/limits.js.',

@@ -13,7 +13,8 @@
     "test": "node --test",
     "dev:all": "concurrently -k -n TW,SERVER -c yellow,cyan \"npm run tw\" \"npm run dev\"",
     "set-role": "node scripts/set-role.js",
-    "usage:report": "node scripts/usage-report.js"
+    "usage:report": "node scripts/usage-report.js",
+    "alert:test": "node scripts/alert-test.js"
   },
   "keywords": [],
   "author": "",

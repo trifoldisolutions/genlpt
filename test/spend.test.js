@@ -143,3 +143,18 @@ test('the alert says the spend, what is paused, and the spend by plan', () => {
   assert.match(email.text, /guests \$30\.00, free accounts \$10\.12, paid accounts \$0\.00/);
   assert.match(email.html, /\$40\.12/);
 });
+test('a test alert (npm run alert:test) is marked as one, and says nothing was spent', () => {
+  const real = spendAlert({ line: 'warning', cost: 30, byPlan: {}, limits: DAILY_SPEND });
+  const test = spendAlert({ line: 'warning', cost: 30, byPlan: {}, limits: DAILY_SPEND, test: true });
+  assert.equal(test.subject, `[Test] ${real.subject}`);
+  assert.match(test.text, /^This is a test of the daily AI spend alerts: nothing was spent/);
+  assert.ok(test.text.endsWith(real.text), 'then the real alert');
+  assert.doesNotMatch(real.text, /test/i);
+});
+
+test('alert addresses: ALERT_EMAIL, comma-separated, blanks ignored', () => {
+  process.env.ALERT_EMAIL = ' ops@example.com,, me@example.com ';
+  assert.deepEqual(spend.alertAddresses(), ['ops@example.com', 'me@example.com']);
+  delete process.env.ALERT_EMAIL;
+  assert.deepEqual(spend.alertAddresses(), []);
+});
