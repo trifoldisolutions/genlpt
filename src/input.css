@@ -286,7 +286,6 @@
      scrollbar: it sat on the cards' bottom edge; the card cut off at the edge shows there's more, and picking it
      scrolls it in. */
   .choice-row { @apply -m-1 flex snap-x scroll-px-1 gap-3 overflow-x-auto overscroll-x-contain p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden; }
-
   .field {
     @apply w-full rounded-md border border-zinc-300 bg-surface px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400;
   }

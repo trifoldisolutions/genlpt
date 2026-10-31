@@ -24,6 +24,8 @@ const {
 } = require('../middleware/auth');
 const { tooMany, mailAllowed, tooManyMessage } = require('../middleware/rateLimit');
 const account = require('../services/account');
+const support = require('../services/support');
+const { checkTurnstile } = require('../services/turnstile');
 const { sendEmail, link } = require('../services/email');
 const emails = require('../services/email/templates');
 const usage = require('../services/usage');
@@ -272,10 +274,11 @@ router.get('/models', (req, res) => {
   res.json({ models: models.map((m) => ({ ...m, allowed: !only || m.name === only })), defaultModel: llm.defaultModel() });
 });
 
-// For the settings' Usage and Billing tabs: the plan's AI limits and this window's counts, fresh (another tab may
-// have used some), and the plan's price and dates
+// For the settings' Usage, Billing and Help center tabs: the plan's AI limits and this window's counts, fresh (another
+// tab may have used some), the plan's price and dates, and whether the day's spend has paused its AI (until resetAt)
 router.get('/usage', requireDb, resolveOwner, async (req, res) => {
-  res.json({ usage: await usage.view(req), plan: usage.planDetails(req) });
+  const [view, pause] = await Promise.all([usage.view(req), spend.check(usage.planOf(req))]);
+  res.json({ usage: view, plan: usage.planDetails(req), pause });
 });
 
 // ---------------------------------------------------------------------------
@@ -573,6 +576,35 @@ router.delete('/account', sameOrigin, async (req, res) => {
     if (await mailAllowed(email)) await sendEmail({ to: email, ...emails.accountDeleted() });
   });
   res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// Support: Settings → Help center's contact form (services/support.js). An account's reply goes to its own address;
+// a guest types one and passes the bot check, as on signup. Limited per connection and per account. The request is
+// saved before the answer, which gives its reference; its email to the inbox goes out after.
+
+const BOT_CHECK = {
+  missing: [422, 'The security check didn’t finish. Please try again in a moment. If this keeps happening, a browser extension may be blocking it.'],
+  failed: [422, 'The security check didn’t go through. Please try again.'],
+  unavailable: [503, 'Messages can’t be sent from here right now. Please email us instead.'],
+};
+
+router.post('/support', sameOrigin, requireDb, resolveOwner, async (req, res) => {
+  const { value, error } = support.cleanRequest(req.body, { signedIn: !!req.user });
+  if (error) throw new ApiError(422, ...error);
+  const senders = [req.ip, ...(req.user ? [`user:${req.user._id}`] : [])];
+  const wait = await tooMany(...senders.flatMap((s) => [['supportHour', s], ['supportDay', s]]));
+  if (wait) {
+    res.set('Retry-After', String(wait));
+    throw new ApiError(429, 'too_many_messages', 'Too many messages in a short time. Please wait before sending another.');
+  }
+  if (!req.user) {
+    const check = await checkTurnstile(req.body.turnstileToken, req.ip);
+    if (check !== 'ok') throw new ApiError(BOT_CHECK[check][0], `bot_check_${check}`, BOT_CHECK[check][1]);
+  }
+  const request = await support.submit(req, value);
+  later('support email', () => support.notify(request));
+  res.status(201).json({ ref: request.ref, email: request.email });
 });
 
 // ---------------------------------------------------------------------------
@@ -1209,6 +1241,7 @@ router.routes = [
   { method: 'GET', path: '/account/transactions', label: 'My payments, newest first (transaction history)' },
   { method: 'GET', path: '/account/export', label: 'Download my data (JSON file)' },
   { method: 'DELETE', path: '/account', label: 'Delete my account and its sessions (password)' },
+  { method: 'POST', path: '/support', label: 'Help center message to the support inbox (guests: bot check)' },
   { method: 'POST', path: '/sessions/:id/expand', label: 'LLM words for branches' },
   { method: 'POST', path: '/sessions/:id/words', label: 'Add manual word' },
   { method: 'PATCH', path: '/sessions/:id/words/:wordId', label: 'Rename / (de)select word' },

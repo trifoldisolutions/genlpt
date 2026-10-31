@@ -58,9 +58,14 @@ const RESET_LINK_HOURS = 1;
 // An account whose email is never confirmed is deleted after this long.
 const UNVERIFIED_DAYS = 7;
 
+// Settings → Help center's contact form: a message's length, in characters (spaces count)
+const SUPPORT_MESSAGE_MIN_CHARS = 20;
+const SUPPORT_MESSAGE_MAX_CHARS = 2000;
+
 // At most `limit` hits per window of `minutes`. Ip: per connection. Email: per address typed, account or not,
 // so a limit never hints at whether an account exists. Mail: account emails one address can receive,
-// whatever triggered them; past it nothing is sent, silently (the page stays the same).
+// whatever triggered them; past it nothing is sent, silently (the page stays the same). Support: messages from
+// Help center, per connection and per account.
 const RATE_LIMITS = {
   loginIp: { limit: 20, minutes: 15 },
   loginEmail: { limit: 10, minutes: 15 },
@@ -68,6 +73,8 @@ const RATE_LIMITS = {
   forgotIp: { limit: 10, minutes: 60 },
   mailHour: { limit: 3, minutes: 60 },
   mailDay: { limit: 10, minutes: 24 * 60 },
+  supportHour: { limit: 5, minutes: 60 },
+  supportDay: { limit: 10, minutes: 24 * 60 },
 };
 
 module.exports = {
@@ -86,5 +93,7 @@ module.exports = {
   VERIFY_LINK_HOURS,
   RESET_LINK_HOURS,
   UNVERIFIED_DAYS,
+  SUPPORT_MESSAGE_MIN_CHARS,
+  SUPPORT_MESSAGE_MAX_CHARS,
   RATE_LIMITS,
 };

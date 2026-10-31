@@ -2,12 +2,12 @@ const helmet = require('helmet');
 
 // Security headers on every response, from helmet's defaults: CSP, HSTS, nosniff, frame and referrer rules…
 // The CSP only lets in what the pages load from other sites: the Iconify script (views/partials/head.ejs),
-// the icons it fetches, Google Fonts (helmet already allows https: styles and fonts), and signup's bot check.
+// the icons it fetches, Google Fonts (helmet already allows https: styles and fonts), and the bot check (signup, guests' support messages).
 // A page that starts loading something new from another site needs it added here, or the browser blocks it.
 
 // Iconify's icon API, and the backup hosts it tries when that one is down
 const ICONIFY_API = ['https://api.iconify.design', 'https://api.simplesvg.com', 'https://api.unisvg.com'];
-// Cloudflare Turnstile (views/app/auth/login.ejs): its script, and the frame it shows the check in
+// Cloudflare Turnstile (views/app/auth/login.ejs, Help center in public/js/app.js): its script, and its frame
 const TURNSTILE = 'https://challenges.cloudflare.com';
 
 const securityHeaders = ({ production = process.env.NODE_ENV === 'production' } = {}) =>

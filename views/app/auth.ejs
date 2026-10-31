@@ -25,6 +25,8 @@
     <main class="mx-auto flex w-full max-w-sm flex-1 flex-col pb-10 pt-12 lg:justify-center lg:py-10">
       <%- include('auth/' + (screen === 'signup' ? 'login' : screen)) %>
     </main>
+    <!-- Someone who can't log in can't reach Settings → Help center: the address is here for them -->
+    <p class="text-center text-sm text-zinc-500">Need help? Email <a href="mailto:<%= brand.supportEmail %>" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= brand.supportEmail %></a></p>
   </div>
 
   <!-- Showcase: a miniature of the app's graph spelling example acronyms (decorative) -->

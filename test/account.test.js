@@ -8,11 +8,12 @@ const AuthToken = require('../models/AuthToken');
 const Usage = require('../models/Usage');
 const AiAction = require('../models/AiAction');
 const Transaction = require('../models/Transaction');
+const SupportRequest = require('../models/SupportRequest');
 const account = require('../services/account');
 const emails = require('../services/email/templates');
 const { PLAN_LIMITS, VERIFY_LINK_HOURS } = require('../config/limits');
 
-const MODELS = { User, BrainstormSession, AuthToken, Usage, AiAction, Transaction };
+const MODELS = { User, BrainstormSession, AuthToken, Usage, AiAction, Transaction, SupportRequest };
 const METHODS = ['findById', 'find', 'findOne', 'create', 'deleteMany', 'deleteOne', 'updateOne', 'updateMany'];
 const REAL = Object.fromEntries(Object.entries(MODELS).map(([name, model]) => [name, Object.fromEntries(METHODS.map((m) => [m, model[m]]))]));
 const { hashPassword } = User;
@@ -41,7 +42,7 @@ function fakeTransactions(list, seen = {}) {
 }
 
 // What services/account.js reads, in memory; each query's filter is kept, to check it only reaches this account
-function fakeExport({ user, sessions = [], window = null, actions = [], payments = [] }) {
+function fakeExport({ user, sessions = [], window = null, actions = [], payments = [], requests = [] }) {
   const filters = {};
   User.findById = (id) => { filters.user = id; return lean(user); };
   BrainstormSession.find = (filter) => { filters.sessions = filter; return { sort: async () => sessions }; };
@@ -51,6 +52,10 @@ function fakeExport({ user, sessions = [], window = null, actions = [], payments
     return { sort: () => lean(actions) };
   };
   filters.payments = fakeTransactions(payments);
+  SupportRequest.find = (filter, projection) => {
+    filters.requests = { filter, projection };
+    return { sort: () => lean(requests) };
+  };
   return filters;
 }
 
@@ -78,7 +83,8 @@ test('the export holds the account, its sessions as the app shows them, and its 
   const window = { _id: `owner:${owner}`, startedAt: now, expiresAt: new Date(now.getTime() + 60 * 60 * 1000), runs: 2, words: 1, expansions: 0, reformulations: {} };
   const actions = [{ kind: 'runs', variant: 'default', sessionId: String(session._id), status: 200, counted: true, createdAt: now }];
   const payments = [payment(25), payment(1, 'refunded')];
-  const filters = fakeExport({ user, sessions: [session], window, actions, payments });
+  const requests = [{ ref: 'K7Q2XM', topic: 'billing', message: 'I was charged twice this month.', email: 'ada@example.com', createdAt: now }];
+  const filters = fakeExport({ user, sessions: [session], window, actions, payments, requests });
 
   const data = await account.exportData(userId, now);
 
@@ -90,6 +96,9 @@ test('the export holds the account, its sessions as the app shows them, and its 
   assert.deepEqual(filters.payments.filter, { userId });
   assert.equal(filters.payments.limit, undefined, 'every payment, not only the ones Billing shows');
   assert.deepEqual(data.transactions, payments);
+  assert.deepEqual(filters.requests.filter, { userId });
+  for (const key of ['userAgent', 'owner', 'emailed']) assert.equal(filters.requests.projection[key], undefined, `support request ${key} stays out`);
+  assert.deepEqual(data.supportRequests, requests);
 
   assert.equal(data.app, 'GenLPT');
   assert.equal(data.exportedAt, now.toISOString());
@@ -131,6 +140,7 @@ test('deleting an account removes everything it owns, unlinks its AI log, and re
   AiAction.updateMany = record('aiActions.updateMany');
   AuthToken.deleteMany = record('tokens.deleteMany');
   Transaction.deleteMany = record('transactions.deleteMany');
+  SupportRequest.deleteMany = record('supportRequests.deleteMany');
   User.deleteOne = record('user.deleteOne');
 
   await account.erase(userId);
@@ -141,16 +151,17 @@ test('deleting an account removes everything it owns, unlinks its AI log, and re
     ['aiActions.updateMany', { owner }, { $unset: { owner: 1, sessionId: 1 } }],
     ['tokens.deleteMany', { userId }],
     ['transactions.deleteMany', { userId }],
+    ['supportRequests.deleteMany', { userId }],
     ['user.deleteOne', { _id: userId }],
   ]);
 });
 
-test('the transaction history is the account’s latest payments, newest first, without the provider’s ids', async () => {
+test('the transaction history is the account’s latest payments, newest first, with their own ids but not the provider’s', async () => {
   const seen = fakeTransactions([payment(27), payment(20, 'failed')]);
   assert.deepEqual(await account.transactions(userId), { transactions: [payment(27), payment(20, 'failed')], more: false });
   assert.deepEqual(seen.filter, { userId });
   assert.deepEqual(seen.sort, { date: -1 });
-  assert.equal(seen.projection._id, 0);
+  assert.equal(seen.projection._id, 1, 'Help center’s form names a payment by its id');
   for (const key of ['provider', 'providerId', 'userId']) assert.equal(seen.projection[key], undefined, key);
 });
 
@@ -221,6 +232,7 @@ test('a confirmed new address first clears an account never confirmed there, the
   AiAction.updateMany = record('aiActions.updateMany');
   AuthToken.deleteMany = record('tokens.deleteMany');
   Transaction.deleteMany = record('transactions.deleteMany');
+  SupportRequest.deleteMany = record('supportRequests.deleteMany');
   User.deleteOne = record('user.deleteOne');
   User.updateOne = record('user.updateOne');
 

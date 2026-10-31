@@ -23,10 +23,10 @@ const { PASSWORD_MAX_CHARS, VERIFY_LINK_HOURS, RESET_LINK_HOURS, UNVERIFIED_DAYS
 const router = express.Router();
 
 // The single-page brainstorm tool; session id travels in ?s=<id>. pendingEmail: an email change waiting for its
-// link, for settings → Account.
+// link, for settings → Account. turnstileSiteKey: the bot check on a guest's Help center message (null: none).
 router.get('/', async (req, res) => {
   const pendingEmail = req.user ? await account.pendingEmail(req.user._id).catch(() => null) : null;
-  res.render('app/index', { shell: 'app', pendingEmail });
+  res.render('app/index', { shell: 'app', pendingEmail, turnstileSiteKey: req.user ? null : turnstileSiteKey() });
 });
 
 // ---------------------------------------------------------------------------

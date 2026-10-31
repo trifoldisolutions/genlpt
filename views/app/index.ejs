@@ -369,13 +369,18 @@
           <iconify-icon icon="boxicons:user" width="18" height="18" aria-hidden="true"></iconify-icon>
           <span data-i18n="account">Account</span>
         </button>
+        <!-- At the bottom of the column from sm up; last in the row on phones -->
+        <button type="button" role="tab" id="settings-tab-help" data-settings-tab="help" aria-controls="settings-help" aria-selected="false" tabindex="-1" class="settings-tab sm:mt-auto">
+          <iconify-icon icon="boxicons:help-circle" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span data-i18n="settingsHelp">Help center</span>
+        </button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-width:thin]">
 
         <section id="settings-general" data-settings-panel="general" role="tabpanel" aria-labelledby="settings-tab-general" class="space-y-6">
           <div>
             <label for="pref-language" class="block text-base font-semibold text-zinc-800" data-i18n="newSessionLanguage"></label>
-            <p id="pref-language-help" class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="newSessionLanguageHelp"></p>
+            <p id="pref-language-help" class="mt-1 text-sm text-zinc-500" data-i18n="newSessionLanguageHelp"></p>
             <!-- Custom dropdown (customSelect() in public/js/select.js) over this select, which it hides and keeps as the value -->
             <div class="mt-3 max-w-xs">
               <select id="pref-language" aria-describedby="pref-language-help" class="field">
@@ -393,7 +398,7 @@
                (.choice-row in src/input.css) would widen the dialog instead of scrolling -->
           <fieldset class="min-w-0">
             <legend class="text-base font-semibold text-zinc-800" data-i18n="graphStyle"></legend>
-            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="graphStyleHelp"></p>
+            <p class="mt-1 text-sm text-zinc-500" data-i18n="graphStyleHelp"></p>
             <div class="choice-row mt-2">
               <label class="choice-card">
                 <input type="radio" name="graph-layout" value="network" class="sr-only">
@@ -459,7 +464,7 @@
           %>
           <fieldset class="min-w-0">
             <legend class="text-base font-semibold text-zinc-800" data-i18n="theme"></legend>
-            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="themeHelp"></p>
+            <p class="mt-1 text-sm text-zinc-500" data-i18n="themeHelp"></p>
             <div class="choice-row mt-2">
               <% themePreviews.forEach((p) => { %>
               <label class="choice-card">
@@ -572,7 +577,7 @@
 
           <div class="border-t border-zinc-100 pt-5">
             <h3 class="text-base font-semibold text-zinc-800" data-i18n="password"></h3>
-            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="passwordHelp"></p>
+            <p class="mt-1 text-sm text-zinc-500" data-i18n="passwordHelp"></p>
             <button type="button" id="password-start" class="btn-ghost mt-3 border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
             <!-- Save new password stays disabled until the new one meets every rule (PasswordStrength.watch, password.js) -->
             <form id="password-form" hidden novalidate class="mt-3 max-w-md space-y-3 rounded-md border border-zinc-200 p-4">
@@ -596,13 +601,13 @@
 
           <div class="border-t border-zinc-100 pt-5">
             <h3 class="text-base font-semibold text-zinc-800" data-i18n="yourData"></h3>
-            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="exportHelp"></p>
+            <p class="mt-1 text-sm text-zinc-500" data-i18n="exportHelp"></p>
             <button type="button" id="export-data" class="btn-ghost mt-3 border border-zinc-200 px-3 py-2 font-medium text-zinc-700"></button>
           </div>
 
           <div class="border-t border-zinc-100 pt-5">
             <h3 class="text-base font-semibold text-zinc-800" data-i18n="deleteAccount"></h3>
-            <p class="mt-1 max-w-prose text-sm text-zinc-500" data-i18n="deleteAccountHelp"></p>
+            <p class="mt-1 text-sm text-zinc-500" data-i18n="deleteAccountHelp"></p>
             <button type="button" id="delete-start" class="btn-ghost mt-3 border border-red-200 px-3 py-2 font-medium text-red-600 hover:bg-red-50 hover:text-red-700"></button>
             <form id="delete-form" hidden novalidate class="mt-3 max-w-md rounded-md border border-red-200 p-4">
               <input type="email" name="username" autocomplete="username" value="<%= user.email %>" hidden readonly>
@@ -618,13 +623,117 @@
           <% } else { %>
           <div class="rounded-md border border-zinc-200 p-4">
             <h3 id="settings-guest-title" class="text-base font-semibold text-zinc-800"></h3>
-            <p id="settings-guest-body" class="mt-1 max-w-prose text-sm text-zinc-500"></p>
+            <p id="settings-guest-body" class="mt-1 text-sm text-zinc-500"></p>
             <div class="mt-4 flex flex-col gap-2 sm:flex-row">
               <a href="/app/signup" data-keep-place class="btn-primary" data-i18n="signUpFree"></a>
               <a href="/app/login" data-keep-place class="btn-ghost justify-center border border-zinc-200 px-4 py-2.5 font-medium text-zinc-700" data-i18n="logIn"></a>
             </div>
           </div>
           <% } %>
+        </section>
+
+        <!-- Help center: answers first. One search across every topic, narrowed to a topic once one is open; under it,
+             a notice only when something's wrong, the guides on the public site (in a new tab, so the open session
+             stays as it is), then popular answers and the topics (renderHelp() in app.js). A message to support comes
+             last. The form is written here, so redrawing the answers as fresh data comes in never touches what's
+             typed in it. -->
+        <section id="settings-help" data-settings-panel="help" role="tabpanel" aria-labelledby="settings-tab-help" hidden class="space-y-6">
+          <div role="search" class="relative">
+            <iconify-icon icon="boxicons:search" width="18" height="18" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true"></iconify-icon>
+            <input id="help-search" type="search" autocomplete="off" spellcheck="false" maxlength="100" aria-controls="help-body" class="field pl-9 pr-11 [&::-webkit-search-cancel-button]:hidden">
+            <button type="button" id="help-search-clear" hidden class="icon-btn absolute right-0 top-1/2 -translate-y-1/2">
+              <iconify-icon icon="boxicons:x" width="18" height="18" aria-hidden="true"></iconify-icon>
+            </button>
+          </div>
+          <p id="help-live" class="sr-only" aria-live="polite"></p>
+
+          <div id="help-status" hidden></div>
+
+          <ul id="help-links" class="divide-y divide-zinc-100 overflow-hidden rounded-md border border-zinc-200">
+            <% [
+              { href: '/blog/how-it-works', icon: 'book-open', key: 'helpHowItWorks' },
+              { href: '/faq', icon: 'help-circle', key: 'helpFaq' },
+            ].forEach((link) => { %>
+            <li>
+              <a href="<%= link.href %>" target="_blank" rel="noopener" class="flex items-center gap-3 px-4 py-3 -outline-offset-2 hover:bg-zinc-50">
+                <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500" aria-hidden="true">
+                  <iconify-icon icon="boxicons:<%= link.icon %>" width="18" height="18"></iconify-icon>
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block text-base font-medium text-zinc-800" data-i18n="<%= link.key %>"></span>
+                  <span class="block text-sm text-zinc-500" data-i18n="<%= link.key %>Help"></span>
+                  <span class="sr-only" data-i18n="opensInNewTab"></span>
+                </span>
+                <iconify-icon icon="boxicons:arrow-up-right" width="18" height="18" class="text-zinc-400" aria-hidden="true"></iconify-icon>
+              </a>
+            </li>
+            <% }) %>
+          </ul>
+
+          <div id="help-body" class="space-y-6"></div>
+
+          <div id="help-contact" class="border-t border-zinc-100 pt-5">
+            <div id="help-contact-start" class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <h3 class="text-base font-semibold text-zinc-800" data-i18n="helpStillTitle"></h3>
+                <p class="mt-1 text-sm text-zinc-500" data-i18n="helpLead"></p>
+              </div>
+              <button type="button" id="help-contact-open" class="btn-ghost shrink-0 self-start border border-zinc-200 px-3 py-2 font-medium text-zinc-700 sm:self-auto">
+                <iconify-icon icon="boxicons:envelope" width="18" height="18" aria-hidden="true"></iconify-icon>
+                <span data-i18n="contactUs"></span>
+              </button>
+            </div>
+
+            <!-- novalidate: app.js checks the fields and says what's wrong under them, like the Account tab's forms -->
+            <form id="help-form" hidden novalidate class="space-y-3 rounded-md border border-zinc-200 p-4">
+              <h3 class="text-base font-semibold text-zinc-800" data-i18n="helpFormTitle"></h3>
+              <div>
+                <label for="help-about" class="label" data-i18n="helpAboutLabel"></label>
+                <div class="mt-1">
+                  <select id="help-about" class="field">
+                    <% ['billing', 'account', 'usage', 'sessions', 'words', 'other'].forEach((topic) => { %>
+                    <option value="<%= topic %>" data-i18n="helpTopic_<%= topic %>"></option>
+                    <% }) %>
+                  </select>
+                </div>
+              </div>
+              <% if (!user) { %>
+              <div>
+                <label for="help-email" class="label" data-i18n="helpEmailLabel"></label>
+                <input id="help-email" type="email" autocomplete="email" maxlength="254" aria-describedby="help-email-help help-error" class="field mt-1">
+                <p id="help-email-help" class="mt-1 text-sm text-zinc-500" data-i18n="helpEmailHelp"></p>
+              </div>
+              <% } %>
+              <div id="help-payment-row" hidden>
+                <label for="help-payment" class="label" data-i18n="helpPaymentLabel"></label>
+                <div class="mt-1"><select id="help-payment" class="field"></select></div>
+              </div>
+              <div>
+                <label for="help-message" class="label" data-i18n="helpMessageLabel"></label>
+                <textarea id="help-message" rows="5" data-min="<%= limits.SUPPORT_MESSAGE_MIN_CHARS %>" maxlength="<%= limits.SUPPORT_MESSAGE_MAX_CHARS %>" aria-describedby="help-message-help help-error" class="field mt-1 resize-none" data-i18n-ph="helpMessagePh"></textarea>
+                <p id="help-message-help" class="mt-1 text-sm text-zinc-500"></p>
+              </div>
+              <% if (!user && turnstileSiteKey) { %>
+              <!-- Bot check (Cloudflare Turnstile), drawn when the form first opens; it shows itself only when it needs a click -->
+              <div id="help-turnstile" data-sitekey="<%= turnstileSiteKey %>"></div>
+              <% } %>
+              <p id="help-error" hidden role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"></p>
+              <div class="!mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" id="help-cancel" class="btn-ghost justify-center border border-zinc-200 bg-surface px-4 py-2.5 font-medium text-zinc-700" data-i18n="cancel"></button>
+                <button type="submit" id="help-send" class="btn-primary"></button>
+              </div>
+            </form>
+
+            <div id="help-sent" hidden role="status" class="flex items-start gap-2 rounded-md bg-emerald-50 px-3 py-2.5 text-emerald-900">
+              <iconify-icon icon="boxicons:check-circle" width="18" height="18" class="mt-px shrink-0" aria-hidden="true"></iconify-icon>
+              <div class="min-w-0 flex-1">
+                <p id="help-sent-text" class="text-sm"></p>
+                <button type="button" id="help-new" class="mt-1.5 text-sm font-medium underline underline-offset-2 hover:text-emerald-950" data-i18n="helpSendAnother"></button>
+              </div>
+            </div>
+
+            <p class="mt-4 text-sm text-zinc-500"><span data-i18n="helpPreferEmail"></span> <a href="mailto:<%= brand.supportEmail %>" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= brand.supportEmail %></a></p>
+          </div>
         </section>
       </div>
     </div>

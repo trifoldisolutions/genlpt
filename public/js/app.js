@@ -20,6 +20,7 @@ const state = {
   step: 'describe', // 'describe' | 'explore' | 'acronyms'
   usage: null, // the plan's AI limits and this window's counts (services/usage.js toView)
   planInfo: null, // the plan's price and dates, for Settings → Billing (services/usage.js planDetails)
+  pause: null, // whether the day's spend paused this plan's AI, for Settings → Help center: { paused, resetAt }
   transactions: null, // an account's payments for Settings → Billing: { transactions, more }, or { error: true }; null until fetched
   newAcronyms: new Set(), // ids from the last run, tagged "New" until the next run or leaving the session
 };
@@ -1895,15 +1896,16 @@ function toggleOptions(open = $('#options-menu').hidden) {
 
 // ---------------------------------------------------------------------------
 // Settings: the account badge (sidebar, bottom) opens the settings dialog on General; its tabs are General, Usage,
-// Billing and Account. Feedback is a toast (shown over the dialog); only the Account tab's forms say what's wrong
-// under their fields.
+// Billing, Account and Help center. Feedback is a toast (shown over the dialog); only the Account tab's forms say
+// what's wrong under their fields.
 
-const SETTINGS_TABS = ['general', 'usage', 'billing', 'account'];
+const SETTINGS_TABS = ['general', 'usage', 'billing', 'account', 'help'];
 const GUEST_HOURS = Number(document.body.dataset.guestHours) || 3;
 const USAGE_HOURS = Number(document.body.dataset.usageHours) || 5;
 // Each plan's price and the limits people see (services/usage.js PLAN_OFFERS), and the plan Billing compares each with
 const PLAN_OFFERS = (() => { try { return JSON.parse(document.body.dataset.plans); } catch { return {}; } })();
-const NEXT_PLAN = { guest: 'free', free: 'paid' };
+// The plan Billing puts beside the viewer's: the plan up, or for the paid plan the free account, to show what it adds
+const COMPARED_PLAN = { guest: 'free', free: 'paid', paid: 'free' };
 const PREF_LANGUAGE = 'pref.newSessionLanguage'; // new sessions' language; '' or none: the open session's
 const PREF_GRAPH = 'pref.graphLayout'; // how the graph is drawn: one of LAYOUTS in graph.js; none: 'network'
 const PREF_THEME = 'pref.theme'; // read by public/js/theme.js, which puts it on <html> before the page is drawn
@@ -1955,6 +1957,13 @@ function setSettingsTab(tab) {
     refreshUsage();
   }
   if (tab === 'billing') refreshTransactions();
+  // Shown at once from what's known, then again as each check comes back
+  if (tab === 'help') {
+    renderHelp();
+    refreshUsage();
+    refreshTransactions();
+    recheckHealth().then(renderHelp);
+  }
   if (tab === 'general') {
     $('#pref-language').value = prefs.get(PREF_LANGUAGE) || '';
     languagePicker.sync();
@@ -2004,17 +2013,18 @@ function onPrefLanguage(e) {
   toast(value ? t('prefSavedLang', { lang: t(`lang_${value}`) }) : t('prefSavedSame'), 'ok');
 }
 
-// Another tab may have used some since: fetched again for the Usage and Billing tabs (with the plan's price and
-// dates), which show the last known counts meanwhile
+// Another tab may have used some since: fetched again for the Usage, Billing and Help center tabs (with the plan's
+// price and dates, and whether its AI is paused), which show the last known counts meanwhile
 async function refreshUsage() {
   if (!state.health.db) return;
   try {
-    ({ usage: state.usage, plan: state.planInfo } = await api('GET', '/usage'));
+    ({ usage: state.usage, plan: state.planInfo, pause: state.pause } = await api('GET', '/usage'));
   } catch {
     return;
   }
   renderSettingsUsage();
   renderSettingsBilling();
+  renderHelp();
   renderBusy();
 }
 
@@ -2075,7 +2085,7 @@ function renderSettingsUsage() {
       usageMeter(t('usageExpansions'), used('expansions'), u.expansions.limit),
       reformulations,
     ]),
-    h('p', { class: 'mt-3 max-w-prose text-sm text-zinc-500', text: t('usagePeriodHelp', { hours: USAGE_HOURS }) }),
+    h('p', { class: 'mt-3 text-sm text-zinc-500', text: t('usagePeriodHelp', { hours: USAGE_HOURS }) }),
   );
 }
 
@@ -2144,11 +2154,13 @@ function planFeature([amount, label, included]) {
   ]);
 }
 
-// A plan's card: its icon, name and price, what it offers, then, for the viewer's plan, when it began and when its
-// period ends, or for the plan up, the way to it. Its rows are a subgrid, so each sits level with the one beside it.
-function planCard(plan, current) {
+// A plan's card: its icon, name and price, what it offers, then, for the viewer's plan (role 'current'), when it
+// began and when its period ends; for the plan up ('up'), the way to it; for the free account beside the paid plan
+// ('down'), that the paid plan has all of it. Its rows are a subgrid, so each sits level with the one beside it.
+function planCard(plan, role) {
   const o = PLAN_OFFERS[plan];
   const paid = plan === 'paid';
+  const current = role === 'current';
   const line = paid ? 'border-cerise-200' : 'border-zinc-200';
   const features = o ? planFeatures(o) : [];
   let footer;
@@ -2159,6 +2171,8 @@ function planCard(plan, current) {
       h('dt', { class: 'label', text: label }),
       h('dd', { class: 'mt-0.5 text-base text-zinc-800', text: value }),
     ])));
+  } else if (role === 'down') {
+    footer = h('div', { class: `mt-3 flex items-end border-t px-4 py-3 ${line}` }, h('p', { class: 'text-sm text-zinc-500', text: t('planIncludedInPaid') }));
   } else {
     footer = h('div', { class: `mt-3 flex items-end border-t px-4 py-3 ${line}` }, upgradeCta(t(plan === 'free' ? 'signUpFree' : 'upgrade'), 'btn-primary w-full'));
   }
@@ -2181,23 +2195,24 @@ function planCard(plan, current) {
   ]);
 }
 
-// The viewer's plan next to the plan up (a guest: the free account; free: the paid plan; paid: on its own), side by
-// side once there's room, then an account's payments
+// The viewer's plan next to another (a guest: the free account; free: the paid plan; paid: the free account, to show
+// what it adds), side by side once there's room, then an account's payments
 function renderSettingsBilling() {
   const box = $('#settings-billing');
   const u = state.usage;
   if (!u) return box.replaceChildren(unavailable('billingUnavailable'));
-  const next = NEXT_PLAN[u.plan];
+  const other = COMPARED_PLAN[u.plan];
   box.replaceChildren(
     h('div', { class: '@container' }, [
-      h('div', { class: `grid gap-x-4 ${next ? '@lg:grid-cols-2' : ''}` }, [planCard(u.plan, true), next && planCard(next, false)]),
-      h('p', { class: 'mt-3 max-w-prose text-sm text-zinc-500', text: t('offerPeriodHelp', { hours: USAGE_HOURS }) }),
+      h('div', { class: 'grid gap-x-4 @lg:grid-cols-2' }, [planCard(u.plan, 'current'), planCard(other, u.plan === 'paid' ? 'down' : 'up')]),
+      h('p', { class: 'mt-3 text-sm text-zinc-500', text: t('offerPeriodHelp', { hours: USAGE_HOURS }) }),
     ]),
     ...(profile ? [transactionHistory()] : []),
   );
 }
 
-// Fetched each time Billing opens (a payment may have come in since); the last ones fetched show meanwhile
+// Fetched each time Billing or Help center opens (a payment may have come in since); the last ones fetched show
+// meanwhile
 async function refreshTransactions() {
   if (!profile || !state.health.db) return;
   try {
@@ -2206,6 +2221,7 @@ async function refreshTransactions() {
     if (!state.transactions?.transactions) state.transactions = { error: true };
   }
   renderSettingsBilling();
+  renderHelpPayments();
 }
 
 const TRANSACTION_STATUS = {
@@ -2243,7 +2259,7 @@ function transactionHistory() {
   else {
     body = h('div', {}, [
       h('ul', { class: 'divide-y divide-zinc-100 rounded-md border border-zinc-200' }, tx.transactions.map(transactionRow)),
-      tx.more && h('p', { class: 'mt-2 max-w-prose text-sm text-zinc-500', text: t('transactionsMore', { n: tx.transactions.length }) }),
+      tx.more && h('p', { class: 'mt-2 text-sm text-zinc-500', text: t('transactionsMore', { n: tx.transactions.length }) }),
     ]);
   }
   return h('div', {}, [settingsHeading(t('transactionHistory')), h('div', { class: 'mt-3' }, body)]);
@@ -2461,6 +2477,492 @@ async function deleteAccount(e) {
   $('#settings-deleted-ok').focus();
 }
 
+// ---------------------------------------------------------------------------
+// Settings → Help center: answers first, like a help site. One search finds answers across every topic, or within
+// the topic open; with nothing typed, popular answers and the topics show. An answer opens in place, with the button
+// that fixes it when there is one, and some are written from the account's own state (its plan's dates, what's left
+// of its AI usage). A message to support (POST /api/support) is for whatever's left. Answers that need the payment
+// provider (a new card, resuming a canceled plan) come with it.
+
+const SUPPORT_MIN = Number($('#help-message').dataset.min) || 20; // SUPPORT_MESSAGE_MIN_CHARS (config/limits.js)
+const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=helpBotCheckReady';
+const ANSWER_BUTTON = 'btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700';
+const HELP_LIST = 'divide-y divide-zinc-100 overflow-hidden rounded-md border border-zinc-200';
+const HELP_STATUS = {
+  warn: ['alert-triangle', 'bg-amber-50 text-amber-900'],
+  error: ['alert-circle', 'bg-red-50 text-red-800'],
+};
+// The field a refused message's error is about
+const HELP_FIELD = { invalid_email: 'help-email', message_too_short: 'help-message', message_too_long: 'help-message' };
+const HELP_TOPICS = [['billing', 'credit-card'], ['account', 'user'], ['usage', 'bar-chart-big'], ['sessions', 'folder'], ['words', 'network-chart']];
+// Shown before any search, after whatever is urgent right now (AI paused, an email change waiting)
+const HELP_POPULAR = ['refund', 'forgot', 'left', 'find'];
+// Words a search skips: nearly every question has them
+const STOP_WORDS = new Set(['the', 'and', 'for', 'you', 'your', 'my', 'me', 'is', 'it', 'to', 'of', 'in', 'on', 'at', 'do', 'does', 'did', 'how', 'what', 'why', 'where', 'when', 'who', 'can', 'be', 'are', 'was', 'with', 'this', 'that', 'im', 'there', 'have', 'has', 'get', 'got']);
+
+let helpQuery = ''; // what's typed in the search
+let helpTopic = null; // the topic open, or null: all of them
+const openAnswers = new Set(); // the answers open, by id, still open when the list is drawn again
+let helpBusy = false; // a message on its way
+let helpWidget = null; // the guest's bot check (Turnstile): 'loading' until its script is in, then the widget's id
+let botCheckFailed = false; // the check itself errored (a blocked frame, a host its key doesn't allow) until it passes
+let aboutPicker = null; // the form's custom dropdowns (select.js): its topic, and the payment it's about
+let paymentPicker = null;
+
+// Signing up or logging in comes back to this session
+const keepPlace = (path) => `${path}?next=${encodeURIComponent(location.pathname + location.search)}`;
+
+function goToTab(tab) {
+  setSettingsTab(tab);
+  $(`#settings-tab-${tab}`).focus();
+}
+
+// Closes the dialog onto the sidebar's session search (the drawer below lg). Once the dialog's own close handling
+// has put the focus back on the account badge, so the search box keeps it.
+function searchSessions() {
+  const dialog = $('#settings-dialog');
+  closeSettings();
+  if (dialog.open) return;
+  dialog.addEventListener('close', () => {
+    if (isDesktop()) setSidebar(true);
+    else openDrawer();
+    setSessionSearch(true);
+  }, { once: true });
+}
+
+// "Your paid plan renews on Nov. 30, 2026.", or what a free account or a guest has instead
+function planAnswer() {
+  const plan = state.usage?.plan;
+  const p = state.planInfo;
+  if (!plan) return t('billingUnavailable');
+  if (plan === 'guest') return t('helpA.plan_guest', { hours: GUEST_HOURS });
+  if (plan === 'free') return t('helpA.plan_free');
+  if (!p?.periodEnd) return t('helpA.plan_paid');
+  return t(p.renews ? 'helpA.plan_paidRenews' : 'helpA.plan_paidEnds', { date: shortDate(p.periodEnd) });
+}
+
+// "3 of 5 acronym runs, … left. They reset at 14:30.", and the way to more
+function leftAnswer() {
+  const u = state.usage;
+  if (!u) return t('usageUnavailable');
+  const open = usageOpen();
+  const left = (kind) => Math.max(0, u[kind].limit - (open ? u[kind].used : 0));
+  return [
+    t('helpA.left_counts', {
+      runs: left('runs'),
+      runsLimit: u.runs.limit,
+      words: left('words'),
+      wordsLimit: u.words.limit,
+      expansions: left('expansions'),
+      expansionsLimit: u.expansions.limit,
+    }),
+    open ? t('helpA.left_resets', { time: resetTime() }) : t('helpA.left_fresh', { hours: USAGE_HOURS }),
+    { guest: t('helpA.left_guest'), free: t('helpA.left_free') }[u.plan],
+  ].filter(Boolean).join(' ');
+}
+
+// Why AI pauses, then how it is right now for this plan
+function pausedAnswer() {
+  let now = t('helpA.paused_ok');
+  if (state.pause?.paused) now = errorText({ code: 'ai_paused', data: { plan: state.usage?.plan, resetAt: state.pause.resetAt } });
+  else if (!state.health.llm) now = t('llmDown');
+  return `${t('helpA.paused')} ${now}`;
+}
+
+const signUpAction = () => ({ label: t('signUpFree'), href: '/app/signup', keep: true });
+const logInAction = () => ({ label: t('logIn'), href: '/app/login', keep: true });
+const accountTab = () => ({ label: t('openAccount'), tab: 'account' });
+const forAccount = () => !!profile;
+const forGuest = () => !profile;
+
+// The answers, in each topic's order: id (helpQ, helpA and helpK.<id> in i18n.js), topic, show (when it applies),
+// body (its text, when it depends on the account) and action: its button, or several, or none. An action is
+// { label, tab } another settings tab; { label, href, keep } a page, in a new tab unless keep (signup, login: back to
+// this session after); { label, run } done here; { label, contact } the message form, about that topic.
+const HELP_ANSWERS = [
+  { id: 'refund', topic: 'billing', action: () => ({ label: t('contactUs'), contact: 'billing' }) },
+  { id: 'receipts', topic: 'billing', show: forAccount, action: () => ({ label: t('viewPayments'), tab: 'billing' }) },
+  { id: 'plan', topic: 'billing', body: planAnswer, action: () => ({ label: t('openBilling'), tab: 'billing' }) },
+  {
+    id: 'compare',
+    topic: 'billing',
+    body: () => t(state.usage?.plan === 'paid' ? 'helpA.compare_paid' : 'helpA.compare'),
+    action: () => ({ label: t('comparePlans'), tab: 'billing' }),
+  },
+  {
+    id: 'pendingEmail',
+    topic: 'account',
+    show: () => !!profile?.pendingEmail,
+    body: () => t('emailPending', { email: profile.pendingEmail, current: profile.email }),
+    action: accountTab,
+  },
+  { id: 'forgot', topic: 'account', action: () => ({ label: t('resetPassword'), href: profile ? `/app/forgot?email=${encodeURIComponent(profile.email)}` : '/app/forgot' }) },
+  { id: 'confirm', topic: 'account', show: forGuest, action: logInAction },
+  { id: 'change', topic: 'account', show: forAccount, action: accountTab },
+  { id: 'data', topic: 'account', show: forAccount, action: accountTab },
+  { id: 'signup', topic: 'account', show: forGuest, action: signUpAction },
+  { id: 'login', topic: 'account', show: forGuest, action: logInAction },
+  { id: 'ai', topic: 'account' },
+  { id: 'left', topic: 'usage', body: leftAnswer, action: () => [{ label: t('openUsage'), tab: 'usage' }, forGuest() && signUpAction()] },
+  { id: 'paused', topic: 'usage', body: pausedAnswer },
+  {
+    id: 'locked',
+    topic: 'usage',
+    show: () => ['guest', 'free'].includes(state.usage?.plan),
+    body: () => t(`helpA.locked_${state.usage.plan}`),
+    action: () => ({ label: t('comparePlans'), tab: 'billing' }),
+  },
+  { id: 'stopped', topic: 'usage' },
+  {
+    id: 'find',
+    topic: 'sessions',
+    body: () => (profile ? t('helpA.find') : t('helpA.find_guest', { hours: GUEST_HOURS })),
+    action: () => state.sessions.length > 0 && { label: t('searchSessionsAction'), run: searchSessions },
+  },
+  { id: 'kept', topic: 'sessions', body: () => (profile ? t('helpA.kept') : t('guestAccountBody', { hours: GUEST_HOURS })), action: () => forGuest() && signUpAction() },
+  { id: 'move', topic: 'sessions', show: forAccount },
+  { id: 'otherTab', topic: 'sessions' },
+  { id: 'language', topic: 'sessions' },
+  { id: 'editWord', topic: 'words' },
+  { id: 'expand', topic: 'words', body: () => t('helpA.expand', { depth: EXPAND_DEPTH }) },
+  { id: 'score', topic: 'words' },
+  { id: 'chunks', topic: 'words' },
+  { id: 'realWords', topic: 'words' },
+  { id: 'domains', topic: 'words' },
+];
+
+const answerTitle = (a) => t(`helpQ.${a.id}`);
+const answerBody = (a) => (a.body ? a.body() : t(`helpA.${a.id}`));
+// The answers that apply to this person, in one topic or all
+const answersOf = (topic) => HELP_ANSWERS.filter((a) => (!topic || a.topic === topic) && (!a.show || a.show()));
+
+function popularAnswers() {
+  const urgent = [(state.pause?.paused || !state.health.llm) && 'paused', profile?.pendingEmail && 'pendingEmail'];
+  const shown = answersOf(null);
+  return [...new Set([...urgent.filter(Boolean), ...HELP_POPULAR])]
+    .map((id) => shown.find((a) => a.id === id))
+    .filter(Boolean);
+}
+
+// An answer comes up for each word typed that it holds, its question counting most; plurals match their singular.
+// The answers holding the most words come first, then in their topics' order.
+function searchAnswers(query, topic) {
+  const terms = fold(query)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length > 1 && !STOP_WORDS.has(w))
+    .map((w) => (w.length > 3 ? w.replace(/s$/, '') : w));
+  if (!terms.length) return [];
+  return answersOf(topic)
+    .map((a, i) => {
+      const title = fold(answerTitle(a));
+      const text = fold(`${answerBody(a)} ${t(`helpK.${a.id}`)}`);
+      const score = terms.reduce((sum, w) => sum + (title.includes(w) ? 3 : text.includes(w) ? 1 : 0), 0);
+      return { a, i, score };
+    })
+    .filter((r) => r.score > 0)
+    .sort((x, y) => y.score - x.score || x.i - y.i)
+    .map((r) => r.a);
+}
+
+function answerAction(a) {
+  if (a.href && a.keep) {
+    return h('a', { href: a.href, class: ANSWER_BUTTON, text: a.label, onclick: (e) => { e.currentTarget.href = keepPlace(a.href); } });
+  }
+  if (a.href) {
+    return h('a', { href: a.href, target: '_blank', rel: 'noopener', class: ANSWER_BUTTON, text: a.label }, h('span', { class: 'sr-only', text: ` ${t('opensInNewTab')}` }));
+  }
+  let run = a.run;
+  if (a.tab) run = () => goToTab(a.tab);
+  if (a.contact) run = () => openHelpForm(true, { about: a.contact });
+  return h('button', { type: 'button', class: ANSWER_BUTTON, text: a.label, onclick: run });
+}
+
+// An answer that opens in place (a native <details>). withTopic: in search results across every topic.
+function answerItem(a, withTopic = false) {
+  const actions = [].concat(a.action?.() || []).filter(Boolean);
+  return h('li', {}, h('details', {
+    class: 'group',
+    open: openAnswers.has(a.id),
+    ontoggle: (e) => { if (e.currentTarget.open) openAnswers.add(a.id); else openAnswers.delete(a.id); },
+  }, [
+    h('summary', {
+      'data-help-focus': `answer:${a.id}`,
+      class: 'flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 -outline-offset-2 hover:bg-zinc-50 [&::-webkit-details-marker]:hidden',
+    }, [
+      h('span', { class: 'min-w-0 flex-1' }, [
+        h('span', { class: 'block text-base font-medium text-zinc-800', text: answerTitle(a) }),
+        withTopic && h('span', { class: 'block text-sm text-zinc-500', text: t(`helpTopic_${a.topic}`) }),
+      ]),
+      icon('chevron-down', 18, 'shrink-0 text-zinc-400 transition-transform group-open:rotate-180'),
+    ]),
+    h('div', { class: 'px-4 pb-3' }, [
+      h('p', { class: 'text-base text-zinc-600', text: answerBody(a) }),
+      actions.length > 0 && h('div', { class: 'mt-3 flex flex-wrap gap-2' }, actions.map(answerAction)),
+    ]),
+  ]));
+}
+
+const answerList = (answers, withTopic = false) => h('ul', { class: HELP_LIST }, answers.map((a) => answerItem(a, withTopic)));
+const helpSection = (title, body) => h('div', {}, [h('h3', { class: 'text-base font-semibold text-zinc-800', text: title }), h('div', { class: 'mt-3' }, body)]);
+
+function topicList() {
+  return h('ul', { class: HELP_LIST }, HELP_TOPICS.map(([topic, iconName]) => h('li', {}, h('button', {
+    type: 'button',
+    'data-help-focus': `topic:${topic}`,
+    class: 'flex w-full items-center gap-3 px-4 py-2.5 text-left -outline-offset-2 hover:bg-zinc-50',
+    onclick: () => openTopic(topic),
+  }, [
+    h('span', { class: 'inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500', 'aria-hidden': 'true' }, icon(iconName, 18)),
+    h('span', { class: 'min-w-0 flex-1 text-base font-medium text-zinc-800', text: t(`helpTopic_${topic}`) }),
+    h('span', { class: 'shrink-0 text-sm text-zinc-500', text: t('helpAnswerCount', { n: answersOf(topic).length }) }),
+    icon('chevron-right', 18, 'shrink-0 text-zinc-400'),
+  ]))));
+}
+
+function topicHeader() {
+  return h('div', {}, [
+    h('button', { type: 'button', 'data-help-focus': 'back', class: 'btn-ghost -ml-2', onclick: () => leaveTopic() }, [icon('chevron-left', 18), t('helpAllTopics')]),
+    h('h3', { class: 'mt-1 text-base font-semibold text-zinc-800', text: t(`helpTopic_${helpTopic}`) }),
+  ]);
+}
+
+// What a search found, said once per search to screen readers (#help-live)
+function resultsText(q, n) {
+  if (n) return t(n === 1 ? 'helpResultsOne' : 'helpResults', { n, q });
+  return t(helpTopic ? 'helpNoResultsIn' : 'helpNoResults', { q, topic: t(`helpTopic_${helpTopic}`) });
+}
+
+// What #help-body shows: a search's answers; a topic's; or the popular ones and the topics
+function helpView() {
+  const q = helpQuery.trim();
+  const parts = helpTopic ? [topicHeader()] : [];
+  if (q) {
+    const found = searchAnswers(q, helpTopic);
+    parts.push(h('div', {}, [
+      h('p', { class: 'text-sm text-zinc-500', text: resultsText(q, found.length) }),
+      found.length > 0 && h('div', { class: 'mt-3' }, answerList(found, !helpTopic)),
+      !found.length && helpTopic && h('button', { type: 'button', class: `${ANSWER_BUTTON} mt-3`, text: t('helpSearchAll'), onclick: () => leaveTopic({ keepQuery: true }) }),
+    ]));
+    return parts;
+  }
+  if (helpTopic) return [...parts, answerList(answersOf(helpTopic))];
+  return [helpSection(t('helpPopular'), answerList(popularAnswers())), helpSection(t('helpTopics'), topicList())];
+}
+
+// A notice when something's wrong: the database is down, this plan's AI is paused for the day, AI is unavailable
+function helpStatus() {
+  if (!state.health.db) return ['error', t('helpStatusDb')];
+  if (state.pause?.paused) return ['warn', errorText({ code: 'ai_paused', data: { plan: state.usage?.plan, resetAt: state.pause.resetAt } })];
+  if (!state.health.llm) return ['warn', t('llmDown')];
+  return null;
+}
+
+// Everything but the search box and the form's fields, which keep what's typed in them. Whatever had the focus in
+// the answers keeps it once they're drawn again (fresh usage or payments come in while the tab is open).
+function renderHelp() {
+  const q = helpQuery.trim();
+  const status = helpStatus();
+  show($('#help-status'), !!status);
+  if (status) {
+    const [name, colors] = HELP_STATUS[status[0]];
+    $('#help-status').replaceChildren(h('p', { class: `flex items-start gap-2 rounded-md px-3 py-2.5 text-sm ${colors}` }, [
+      icon(name, 18, 'mt-px shrink-0'),
+      h('span', { class: 'min-w-0', text: status[1] }),
+    ]));
+  }
+  show($('#help-links'), !q && !helpTopic);
+  $('#help-search').placeholder = helpTopic ? t('helpSearchTopicPh', { topic: t(`helpTopic_${helpTopic}`) }) : t('helpSearchPh');
+  const clear = $('#help-search-clear');
+  const clearLabel = t(q ? 'helpSearchClear' : 'helpSearchAll');
+  show(clear, !!(q || helpTopic));
+  clear.setAttribute('aria-label', clearLabel);
+  clear.title = clearLabel;
+  const focused = document.activeElement?.dataset?.helpFocus;
+  $('#help-body').replaceChildren(...helpView());
+  if (focused) $(`#help-body [data-help-focus="${focused}"]`)?.focus();
+  $('#help-message-help').textContent = profile ? `${t('helpReplyTo', { email: profile.email })} ${t('helpContextNote')}` : t('helpContextNote');
+  renderHelpPayments();
+}
+
+function onHelpSearch(e) {
+  helpQuery = e.target.value;
+  renderHelp();
+  const q = helpQuery.trim();
+  $('#help-live').textContent = q ? resultsText(q, searchAnswers(q, helpTopic).length) : '';
+}
+
+// The search, in the topic open: its ✕ (and Escape) clears what's typed, then leaves the topic
+function clearHelpSearch() {
+  if (helpQuery.trim()) {
+    helpQuery = '';
+    $('#help-search').value = '';
+    renderHelp();
+  } else if (helpTopic) {
+    leaveTopic();
+    return;
+  }
+  $('#help-search').focus();
+}
+
+function openTopic(topic) {
+  helpTopic = topic;
+  helpQuery = '';
+  $('#help-search').value = '';
+  renderHelp();
+  $('#help-search').focus();
+}
+
+// keepQuery: a search that found nothing in the topic goes on in every topic
+function leaveTopic({ keepQuery = false } = {}) {
+  helpTopic = null;
+  if (!keepQuery) {
+    helpQuery = '';
+    $('#help-search').value = '';
+  }
+  renderHelp();
+  $('#help-search').focus();
+}
+
+// The payment a billing message is about: for an account with payments. The one picked stays picked as the list
+// comes in again.
+function renderHelpPayments() {
+  const list = profile && $('#help-about').value === 'billing' ? state.transactions?.transactions || [] : [];
+  const select = $('#help-payment');
+  const picked = select.value;
+  show($('#help-payment-row'), list.length > 0);
+  select.replaceChildren(
+    h('option', { value: '', text: t('helpPaymentNone') }),
+    ...list.map((tx) => h('option', { value: tx._id, text: `${shortDate(tx.date)} · ${money(tx.amount, tx.currency, true)} · ${t(`transaction_${tx.status}`)}` })),
+  );
+  select.value = list.some((tx) => tx._id === picked) ? picked : '';
+  paymentPicker?.sync();
+}
+
+function renderHelpButtons() {
+  setButtonBusy($('#help-send'), helpBusy, t('helpSend'), t('helpSending'));
+  $('#help-form').querySelectorAll('button, input, textarea, select').forEach((el) => { el.disabled = helpBusy; });
+  aboutPicker?.sync();
+  paymentPicker?.sync();
+}
+
+// What's wrong (null: nothing), under the form's fields, with the cursor in the field it's about
+function setHelpError(text, fieldId = null) {
+  show($('#help-error'), !!text);
+  $('#help-error').textContent = text || '';
+  $('#help-form').querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+  const field = fieldId && $(`#${fieldId}`);
+  if (!field) return;
+  field.setAttribute('aria-invalid', 'true');
+  field.focus();
+}
+
+// The form in place of its button (open: false, the other way round, emptied). about: the topic it opens on; else
+// the topic open, or Something else.
+function openHelpForm(open, { about = null } = {}) {
+  show($('#help-contact-start'), !open);
+  show($('#help-form'), open);
+  show($('#help-sent'), false);
+  setHelpError(null);
+  if (!open) {
+    $('#help-form').reset();
+    aboutPicker?.sync();
+    renderHelpPayments();
+    return;
+  }
+  $('#help-about').value = about || helpTopic || 'other';
+  aboutPicker?.sync();
+  renderHelpPayments();
+  drawBotCheck();
+  const email = $('#help-email');
+  (email && !email.value ? email : $('#help-message')).focus();
+}
+
+// A guest's bot check is drawn the first time the form opens: its script loads then, not with the app
+function drawBotCheck() {
+  const box = $('#help-turnstile');
+  if (!box || helpWidget) return;
+  helpWidget = 'loading';
+  window.helpBotCheckReady = () => {
+    helpWidget = window.turnstile.render(box, {
+      sitekey: box.dataset.sitekey,
+      size: 'flexible',
+      appearance: 'interaction-only',
+      theme: currentTheme() === 'light' ? 'light' : 'dark',
+      callback: () => { botCheckFailed = false; },
+      // Handled here, so it isn't thrown on the page
+      'error-callback': () => { botCheckFailed = true; return true; },
+    });
+  };
+  document.head.append(h('script', { src: TURNSTILE_SCRIPT, async: true }));
+}
+
+// The bot check's token: '' while it's still running; null without a check, or when it can't run (its script
+// blocked, or it errored): the message goes without one, and the server's answer says what happened
+function botCheckToken() {
+  if (!$('#help-turnstile') || !window.turnstile || botCheckFailed) return null;
+  if (helpWidget === 'loading') return '';
+  return window.turnstile.getResponse(helpWidget) || '';
+}
+
+async function sendHelp(e) {
+  e.preventDefault();
+  if (helpBusy) return;
+  const email = $('#help-email')?.value.trim().toLowerCase();
+  const message = $('#help-message').value.trim();
+  if (email !== undefined && !EMAIL.test(email)) return setHelpError(t('enterEmail'), 'help-email');
+  if (message.length < SUPPORT_MIN) return setHelpError(t('helpMessageShort', { min: SUPPORT_MIN }), 'help-message');
+  const turnstileToken = botCheckToken();
+  if (turnstileToken === '') return setHelpError(t('helpBotCheckPending'));
+  helpBusy = true;
+  renderHelpButtons();
+  let sent = null;
+  let error = null;
+  try {
+    sent = await api('POST', '/support', {
+      topic: $('#help-about').value,
+      message,
+      email,
+      transactionId: $('#help-payment').value || undefined,
+      sessionId: state.session?._id,
+      turnstileToken: turnstileToken || undefined,
+    });
+  } catch (err) {
+    error = err;
+  }
+  helpBusy = false;
+  renderHelpButtons();
+  if (turnstileToken) window.turnstile.reset(helpWidget); // a token works once
+  if (error) return setHelpError(errorText(error), HELP_FIELD[error.code]);
+  openHelpForm(false);
+  show($('#help-contact-start'), false);
+  $('#help-sent-text').textContent = t('helpSentText', sent);
+  show($('#help-sent'), true);
+  $('#help-new').focus();
+}
+
+function bindHelp() {
+  const search = $('#help-search');
+  search.setAttribute('aria-label', t('helpSearchLabel'));
+  search.addEventListener('input', onHelpSearch);
+  // Escape clears the search first, then leaves the topic, before it closes the dialog
+  search.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || (!helpQuery.trim() && !helpTopic)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearHelpSearch();
+  });
+  $('#help-search-clear').addEventListener('click', clearHelpSearch);
+  aboutPicker = customSelect($('#help-about'));
+  paymentPicker = customSelect($('#help-payment'));
+  $('#help-about').addEventListener('change', renderHelpPayments);
+  $('#help-contact-open').addEventListener('click', () => openHelpForm(true));
+  $('#help-cancel').addEventListener('click', () => { openHelpForm(false); $('#help-contact-open').focus(); });
+  $('#help-new').addEventListener('click', () => openHelpForm(true));
+  $('#help-form').addEventListener('submit', sendHelp);
+  $('#help-form').addEventListener('input', () => setHelpError(null));
+  renderHelpButtons();
+}
+
 function bindSettings() {
   const badge = $('#account-btn');
   badge.setAttribute('aria-label', t('badgeLabel', { name: $('#account-name').textContent.trim() })); // the name it shows, then what it does
@@ -2515,6 +3017,7 @@ function bindSettings() {
   document.querySelectorAll('input[name="graph-layout"]').forEach((r) => r.addEventListener('change', onPrefGraph));
   document.querySelectorAll('input[name="theme"]').forEach((r) => r.addEventListener('change', onPrefTheme));
   renderSettingsAccount();
+  bindHelp();
 }
 
 const panelMinimized = () => $('#workflow').dataset.min === 'true';

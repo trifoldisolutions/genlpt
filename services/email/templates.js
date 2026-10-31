@@ -14,19 +14,28 @@ const P = 'margin:0 0 16px;font-size:15px;line-height:1.55;color:#27272a;';
 const LINK = 'color:#c11562;text-decoration:underline;';
 
 // Blocks: a string is a paragraph; { button, url } is the one main action; { links: [[label, url], …] } are
-// secondary links. The text version turns every link into "label: url".
-function compose(subject, blocks) {
+// secondary links; { quote } is text kept as written, line breaks included (a support request's message);
+// { details: [[label, value], …] } is a compact list of facts. The text version turns every link into
+// "label: url". signed: false leaves out "The {appName} team".
+function compose(subject, blocks, { signed = true } = {}) {
   const text = [
     ...blocks.map((b) => {
       if (typeof b === 'string') return b;
+      if (b.quote != null) return b.quote;
+      if (b.details) return b.details.map(([label, value]) => `${label}: ${value}`).join('\n');
       if (b.button) return `${b.button}: ${b.url}`;
       return b.links.map(([label, url]) => `${label}: ${url}`).join('\n');
     }),
-    `The ${appName} team`,
+    ...(signed ? [`The ${appName} team`] : []),
   ].join('\n\n');
 
   const body = blocks.map((b) => {
     if (typeof b === 'string') return `<p style="${P}">${esc(b)}</p>`;
+    if (b.quote != null) return `<p style="${P}white-space:pre-wrap;border-left:3px solid #e4e4e7;padding-left:12px;">${esc(b.quote)}</p>`;
+    if (b.details) {
+      const rows = b.details.map(([label, value]) => `<tr><td style="padding:2px 12px 2px 0;color:#71717a;white-space:nowrap;vertical-align:top;">${esc(label)}</td><td style="padding:2px 0;color:#27272a;word-break:break-all;">${esc(value)}</td></tr>`);
+      return `<table style="margin:0 0 16px;border-collapse:collapse;font-size:13px;line-height:1.5;">${rows.join('')}</table>`;
+    }
     if (b.button) {
       return `<p style="margin:24px 0;"><a href="${esc(b.url)}" style="display:inline-block;background:#de247d;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:6px;">${esc(b.button)}</a></p>`
         + `<p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#71717a;">If the button doesn't work, copy and paste this link into your browser:<br><a href="${esc(b.url)}" style="${LINK}word-break:break-all;">${esc(b.url)}</a></p>`;
@@ -40,7 +49,7 @@ function compose(subject, blocks) {
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:6px;padding:28px 24px;">
 <p style="margin:0 0 24px;font-size:18px;font-weight:700;color:#18181b;">${esc(appName)}</p>
 ${body}
-<p style="margin:24px 0 0;font-size:15px;line-height:1.55;color:#27272a;">The ${esc(appName)} team</p>
+${signed ? `<p style="margin:24px 0 0;font-size:15px;line-height:1.55;color:#27272a;">The ${esc(appName)} team</p>` : ''}
 </div>
 </body>
 </html>`;
@@ -147,7 +156,34 @@ function spendAlert({ line, cost, byPlan, limits, test = false }) {
   ]);
 }
 
+const SUPPORT_TOPICS = { billing: 'Billing', account: 'Account', usage: 'AI and usage', sessions: 'Sessions', words: 'Words and acronyms', other: 'Other' };
+const PLAN_NAMES = { guest: 'Guest', free: 'Free account', paid: 'Paid plan' };
+const day = (date) => (date ? new Date(date).toISOString().slice(0, 10) : '?');
+
+// Not an account email: a message from Settings → Help center, to the support inbox (services/support.js), sent
+// with Reply-To the sender. It holds what they typed, which is fine here: it only ever goes to our own inbox.
+// r: the SupportRequest, as saved
+function supportRequest(r) {
+  const sub = r.subscription;
+  const details = [
+    ['From', `${r.email} (${r.userId ? 'account' : 'guest, address not confirmed'})`],
+    ['Plan', PLAN_NAMES[r.plan] || r.plan],
+    sub?.status && ['Subscription', `${sub.status}, ${sub.cancelAtPeriodEnd ? 'ends' : 'renews'} ${day(sub.currentPeriodEnd)}`],
+    ['Owner', r.owner || 'none'],
+    r.transactionId && ['Payment', String(r.transactionId)],
+    r.sessionId && ['Open session', String(r.sessionId)],
+    ['Browser', r.userAgent || 'unknown'],
+    ['Sent', new Date(r.createdAt || Date.now()).toISOString()],
+  ].filter(Boolean);
+  return compose(`[${SUPPORT_TOPICS[r.topic]}] Support request ${r.ref}`, [
+    { quote: r.message },
+    `Reply to this email to answer: your reply goes to ${r.email}.`,
+    { details },
+  ], { signed: false });
+}
+
 module.exports = {
+  supportRequest,
   verifyEmail,
   alreadyRegistered,
   resetPassword,
