@@ -31,16 +31,6 @@
       <iconify-icon icon="boxicons:edit" width="18" height="18" aria-hidden="true"></iconify-icon>
       <span class="sr-only lg:not-sr-only">New email</span>
     </a>
-    <form method="post" action="/mail/sync" data-busy class="shrink-0">
-      <input type="hidden" name="box" value="<%= box.key %>">
-      <% if (q) { %><input type="hidden" name="q" value="<%= q %>"><% } %>
-      <% if (unreadOnly) { %><input type="hidden" name="unread" value="1"><% } %>
-      <% if (opened) { %><input type="hidden" name="t" value="<%= openId %>"><% } %>
-      <button type="submit" class="btn-ghost w-full justify-center border border-zinc-200 px-3 py-2 font-medium text-zinc-700" title="Check for mail">
-        <iconify-icon icon="boxicons:refresh-cw" width="18" height="18" aria-hidden="true"></iconify-icon>
-        <span class="sr-only lg:not-sr-only">Check for mail</span>
-      </button>
-    </form>
     <p class="mt-4 hidden px-2.5 text-sm text-zinc-500 lg:block">Mailboxes</p>
     <nav aria-label="Mailboxes" class="flex gap-1 lg:mt-1 lg:flex-col">
       <% boxes.forEach((b) => { %>

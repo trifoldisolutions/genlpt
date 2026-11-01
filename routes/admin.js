@@ -114,7 +114,8 @@ async function mailPage(res, { boxKey, threadId = null, compose = false, reply =
     title: 'Internal Mail Services',
     nav: 'mail',
     fill: true,
-    // The header's search bar (views/admin/partials/head.ejs). A new search starts from the top of the folder.
+    // The header's search bar (views/admin/partials/head.ejs), with "Check for mail" beside it. A new search starts from
+    // the top of the folder; checking for mail keeps everything where it is.
     search: {
       action: '/mail',
       value: q,
@@ -123,6 +124,7 @@ async function mailPage(res, { boxKey, threadId = null, compose = false, reply =
       hidden: { box: box.key, ...unreadParam },
       clear: `/mail?${new URLSearchParams({ box: box.key, ...unreadParam, ...(opened ? { t: String(opened.thread._id) } : {}) })}`,
       phone: !opened && !compose,
+      sync: { action: '/mail/sync', hidden: { box: box.key, ...(q ? { q } : {}), ...unreadParam, ...(opened ? { t: String(opened.thread._id) } : {}) } },
     },
     q,
     mail,

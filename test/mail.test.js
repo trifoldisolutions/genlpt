@@ -364,9 +364,13 @@ test('mail search: an email saved from now on can be found', async (t) => {
 
 test('mail page: the header has the search bar, what was searched is escaped, and the list keeps it', async () => {
   const q = '<img src=x>';
-  const search = { action: '/mail', value: q, label: 'Search Support', maxLength: 200, hidden: { box: 'support' }, clear: '/mail?box=support', phone: true };
+  const sync = { action: '/mail/sync', hidden: { box: 'support', q, t: 'abc' } };
+  const search = { action: '/mail', value: q, label: 'Search Support', maxLength: 200, hidden: { box: 'support' }, clear: '/mail?box=support', phone: true, sync };
   const html = await drawMail({ q, search, list: { threads: [OPENED.thread], more: true } });
   assert.match(html, /role="search"/);
+  const checkForMail = html.slice(html.indexOf('</form>', html.indexOf('role="search"')));
+  assert.match(checkForMail, /action="\/mail\/sync"[\s\S]*name="box" value="support"[\s\S]*name="q" value="&lt;img src=x&gt;"[\s\S]*name="t" value="abc"[\s\S]*aria-label="Check for mail"/, 'right after the search field, keeping what is open');
+  assert.equal((html.match(/action="\/mail\/sync"/g) || []).length, 1, 'and only there');
   assert.match(html, /placeholder="Search Support"/);
   assert.match(html, /aria-label="Clear search"/);
   assert.ok(!html.includes('<img src=x>'));
