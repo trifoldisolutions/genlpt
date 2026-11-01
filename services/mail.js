@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const MailMessage = require('../models/MailMessage');
 const MailThread = require('../models/MailThread');
 const { normalizeEmail, emailProblem } = require('../middleware/auth');
-const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX } = require('../config/mail');
+const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, ATTACHMENTS_MAX_BYTES } = require('../config/mail');
 
 // The team's mailbox (Admin → Mail, routes/admin.js). Email to any address of the domain is received by Resend, which
 // keeps it 30 days: the app copies each one into mail_messages, grouped in mail_threads, where admins read and answer
@@ -13,6 +13,7 @@ const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RE
 
 const RESEND_URL = 'https://api.resend.com';
 const TIMEOUT_MS = 15000;
+const ATTACHMENTS_TIMEOUT_MS = 60000; // downloading a forward's attachments, and sending them
 const WEBHOOK_TOLERANCE_S = 5 * 60; // Svix's own: an older delivery could be a replay
 const SYNC_EVERY_MS = 60 * 1000; // opening the mailbox asks Resend at most this often
 const SYNC_PAGES = 10; // 100 emails each: a first sync takes up to Resend's 30 days' worth
@@ -31,7 +32,7 @@ class MailError extends Error {
 }
 
 // Resend's API. Throws a MailError whose message says what to fix.
-async function resend(path, { method = 'GET', body, idempotencyKey, fetchImpl = fetch } = {}) {
+async function resend(path, { method = 'GET', body, idempotencyKey, fetchImpl = fetch, timeoutMs = TIMEOUT_MS } = {}) {
   const key = process.env.RESEND_API_KEY;
   if (!key) throw new MailError('no_key', 'RESEND_API_KEY is not set, so the mailbox can’t reach Resend.');
   let res;
@@ -44,7 +45,7 @@ async function resend(path, { method = 'GET', body, idempotencyKey, fetchImpl = 
         ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     throw new MailError('unreachable', `Resend didn’t answer (${err.message}). Try again in a moment.`);
@@ -110,6 +111,7 @@ const messageIds = (value) => String(value || '').match(/<[^<>\s]+>/g) || [];
 const SUBJECT_PREFIXES = /^\s*((re|fwd?|aw|wg|tr|sv|vs|rv|antw)\s*(\[\d+\])?\s*:\s*)+/i;
 const baseSubject = (subject) => String(subject || '').replace(SUBJECT_PREFIXES, '').trim();
 const replySubject = (subject) => (/^\s*re\s*:/i.test(subject || '') ? subject : `Re: ${baseSubject(subject) || subject || ''}`.trim());
+const forwardSubject = (subject) => `Fwd: ${baseSubject(subject) || subject || ''}`.trim();
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 function decodeEntity(match, entity) {
@@ -223,7 +225,7 @@ async function file(fields, { threadId = null, counterpart }) {
   }
   let message;
   try {
-    message = (await MailMessage.create({ ...fields, threadId: id })).toObject();
+    message = (await MailMessage.create({ ...fields, threadId: id, searchText: searchTextOf(fields) })).toObject();
   } catch (err) {
     if (err.code !== 11000) throw err;
     if (created) await MailThread.deleteOne({ _id: id }); // the webhook and a sync crossed: the other one saved it
@@ -328,7 +330,8 @@ function addressList(value) {
   return { value: list };
 }
 
-// The compose or reply form, checked: { value } or { error } (a message for the form)
+// The compose, reply or forward form, checked: { value } or { error } (a message for the form). A forward's message is
+// optional: the email forwarded is what it says.
 function cleanDraft(body) {
   const from = MAILBOXES.find((m) => m.address === body?.from);
   if (!from) return { error: 'Choose the address to send from.' };
@@ -342,7 +345,8 @@ function cleanDraft(body) {
   if (!subject) return { error: 'Add a subject.' };
   if (subject.length > SUBJECT_MAX_CHARS) return { error: `Keep the subject under ${SUBJECT_MAX_CHARS} characters.` };
   const text = String(body.body || '').replace(/\r\n?/g, '\n').trim();
-  if (!text) return { error: 'Write a message.' };
+  const forwarding = isId(body.forwarding) ? body.forwarding : null;
+  if (!text && !forwarding) return { error: 'Write a message.' };
   if (text.length > BODY_MAX_CHARS) return { error: `Keep the message under ${BODY_MAX_CHARS} characters.` };
   return {
     value: {
@@ -351,7 +355,9 @@ function cleanDraft(body) {
       cc: cc.value,
       subject,
       text,
-      answering: isId(body.answering) ? body.answering : null,
+      answering: !forwarding && isId(body.answering) ? body.answering : null,
+      forwarding,
+      attachments: forwarding ? [].concat(body.attachments || []).map(String) : [],
       key: typeof body.key === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(body.key) ? body.key : null,
     },
   };
@@ -370,16 +376,61 @@ function replyHeaders(answering) {
   return { references, headers: { 'In-Reply-To': answering.messageId, References: references.join(' ') } };
 }
 
-// Sends a checked draft (cleanDraft) from its mailbox: a reply when it answers a message, else a new thread. The
-// draft's key makes a form sent twice (a double click, a reload) one email. Returns the saved message.
+// The email forwarded, under the note: its headers and all of its words (unlike a reply's quote, whose reader has
+// seen it), as plain text, like everything the mailbox sends
+function forwardedText(message) {
+  const lines = [
+    '---------- Forwarded message ---------',
+    `From: ${formatAddress(message.from)}`,
+    `Date: ${fullDate(message.date)}`,
+    `Subject: ${message.subject || '(no subject)'}`,
+    `To: ${(message.to || []).join(', ')}`,
+    ...(message.cc?.length ? [`Cc: ${message.cc.join(', ')}`] : []),
+  ];
+  return `${lines.join('\n')}\n\n${bodyText(message).trim()}`;
+}
+
+// The attachments chosen to go along with a forward, for Resend: their content, not their download links. A link can
+// change each time it's asked for, and a form sent twice must be the same request to Resend to stay one email.
+async function forwardAttachments(message, ids, fetchImpl = fetch) {
+  const chosen = (message.attachments || []).filter((a) => a.id && ids.includes(a.id));
+  if (chosen.reduce((sum, a) => sum + (a.size || 0), 0) > ATTACHMENTS_MAX_BYTES) {
+    throw new MailError('too_big', `These attachments are over the ${Math.floor(ATTACHMENTS_MAX_BYTES / 1024 / 1024)} MB an email can carry. Untick some.`);
+  }
+  return Promise.all(chosen.map(async (a) => {
+    const url = await attachmentUrl(String(message._id), a.id);
+    const res = url && (await fetchImpl(url, { signal: AbortSignal.timeout(ATTACHMENTS_TIMEOUT_MS) }).catch(() => null));
+    if (!res?.ok) throw new MailError('attachment', `Couldn’t get “${a.filename || 'an attachment'}” from Resend. Try again, or untick it.`);
+    return { filename: a.filename || 'attachment', content: Buffer.from(await res.arrayBuffer()).toString('base64'), size: a.size, contentType: a.contentType };
+  }));
+}
+
+// Sends a checked draft (cleanDraft) from its mailbox: a reply when it answers a message, a forward when it forwards
+// one, else a new thread. A forward is a new thread too: it's with whom it went to, so their answer can't be taken for
+// the customer's, or a reply to it go to the customer. The draft's key makes a form sent twice (a double click, a
+// reload) one email. Returns the saved message.
 async function send(draft, { sentBy = null } = {}) {
+  const forwarding = draft.forwarding ? await MailMessage.findById(draft.forwarding).lean() : null;
+  if (draft.forwarding && !forwarding) throw new MailError('gone', 'That email no longer exists, so it can’t be forwarded.');
   const answering = draft.answering ? await MailMessage.findById(draft.answering).lean() : null;
-  const text = answering ? `${draft.text}\n\n${quoted(answering)}` : draft.text;
+  const text = forwarding
+    ? [draft.text, forwardedText(forwarding)].filter(Boolean).join('\n\n')
+    : answering ? `${draft.text}\n\n${quoted(answering)}` : draft.text;
+  const attachments = forwarding ? await forwardAttachments(forwarding, draft.attachments) : [];
   const { references, headers } = replyHeaders(answering);
   const sent = await resend('/emails', {
     method: 'POST',
     idempotencyKey: draft.key,
-    body: { from: formatAddress(draft.from), to: draft.to, ...(draft.cc.length ? { cc: draft.cc } : {}), subject: draft.subject, text, headers },
+    timeoutMs: attachments.length ? ATTACHMENTS_TIMEOUT_MS : TIMEOUT_MS,
+    body: {
+      from: formatAddress(draft.from),
+      to: draft.to,
+      ...(draft.cc.length ? { cc: draft.cc } : {}),
+      subject: draft.subject,
+      text,
+      headers,
+      ...(attachments.length ? { attachments: attachments.map(({ filename, content }) => ({ filename, content })) } : {}),
+    },
   });
   const thread = answering ? await MailThread.findById(answering.threadId).lean() : null;
   const counterpart = thread?.counterpart?.address === draft.to[0] ? thread.counterpart : { name: '', address: draft.to[0] };
@@ -395,6 +446,7 @@ async function send(draft, { sentBy = null } = {}) {
     replyTo: [],
     subject: draft.subject,
     text,
+    attachments: attachments.map(({ filename, size, contentType }) => ({ filename, size, contentType })),
     date: new Date(),
     sentBy,
   }, { threadId: answering?.threadId || null, counterpart });
@@ -406,6 +458,67 @@ async function send(draft, { sentBy = null } = {}) {
       .catch((err) => console.error('[mail] message id:', err.message));
   }, 3000).unref();
   return message;
+}
+
+// ---------------------------------------------------------------------------
+// Searching
+
+const QUERY_MAX_CHARS = 200;
+const QUERY_MAX_WORDS = 10;
+
+const cleanQuery = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, QUERY_MAX_CHARS) : '');
+
+// Lowercase, without accents and with one kind of apostrophe, so "recu" finds "Reçu" and "don't" finds "don’t"
+const folded = (value) => String(value || '')
+  .normalize('NFKD')
+  .replace(/\p{M}/gu, '')
+  .toLowerCase()
+  .replace(/œ/g, 'oe')
+  .replace(/æ/g, 'ae')
+  .replace(/ß/g, 'ss')
+  .replace(/[‘’]/g, "'")
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// What search looks through: who an email is from and to, its subject, its words (an HTML email's, without its tags)
+// and its attachments' names. Our own addresses stay out, or "support" would find every email.
+function searchTextOf(message) {
+  const sender = message.direction === 'out' ? [] : [message.from?.name, message.from?.address];
+  const others = [...(message.to || []), ...(message.cc || []), ...(message.replyTo || [])].filter((a) => !MAILBOX_ADDRESSES.includes(a));
+  const names = (message.attachments || []).map((a) => a.filename);
+  return folded([...sender, ...others, message.subject, bodyText(message).slice(0, TEXT_MAX_CHARS), ...names].filter(Boolean).join(' '));
+}
+
+const searchWords = (query) => [...new Set(folded(cleanQuery(query)).split(' ').filter(Boolean))].slice(0, QUERY_MAX_WORDS);
+
+// Whether an email has all of the words searched for, anywhere in what search looks through, parts of words included
+function matchesSearch(message, query) {
+  const words = searchWords(query);
+  if (!words.length) return false;
+  const text = searchTextOf(message);
+  return words.every((word) => text.includes(word));
+}
+
+// Emails saved before search existed get their text the first time someone searches, so there's nothing to migrate
+let filling = null;
+function fillSearchText() {
+  filling ||= (async () => {
+    for await (const message of MailMessage.find({ searchText: { $exists: false } }).lean().cursor()) {
+      await MailMessage.updateOne({ _id: message._id }, { $set: { searchText: searchTextOf(message) } });
+    }
+  })().catch((err) => {
+    filling = null; // the next search tries again
+    throw err;
+  });
+  return filling;
+}
+
+const asRegex = (word) => new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+// The threads holding an email with all these words (a team's mailbox is small enough to read through)
+async function threadsWith(words) {
+  await fillSearchText();
+  return MailMessage.distinct('threadId', { $and: words.map((word) => ({ searchText: asRegex(word) })) });
 }
 
 // ---------------------------------------------------------------------------
@@ -423,11 +536,14 @@ const boxFilter = (box) => (box.key === 'all' ? {} : { mailbox: box.key === 'oth
 
 const LIST_SIZE = 50;
 
-// A folder's threads, latest first, LIST_SIZE at a time (before: the lastAt to continue from)
-async function listThreads(box, { unreadOnly = false, before = null } = {}) {
+// A folder's threads, latest first, LIST_SIZE at a time (before: the lastAt to continue from; query: only those with
+// an email that has its words)
+async function listThreads(box, { unreadOnly = false, before = null, query = '' } = {}) {
   const filter = { ...boxFilter(box), messages: { $gt: 0 } };
   if (unreadOnly) filter.unread = { $gt: 0 };
   if (before) filter.lastAt = { $lt: before };
+  const words = searchWords(query);
+  if (words.length) filter._id = { $in: await threadsWith(words) };
   const threads = await MailThread.find(filter).sort({ lastAt: -1 }).limit(LIST_SIZE + 1).lean();
   return { threads: threads.slice(0, LIST_SIZE), more: threads.length > LIST_SIZE };
 }
@@ -497,12 +613,17 @@ module.exports = {
   send,
   BOXES,
   boxOf,
+  QUERY_MAX_CHARS,
+  cleanQuery,
+  matchesSearch,
   listThreads,
   unreadCounts,
   getThread,
   markRead,
   markUnread,
   replySubject,
+  forwardSubject,
+  snippetOf,
   shortDate,
   fullDate,
   frameDoc,
@@ -518,4 +639,8 @@ module.exports = {
   counterpartOf,
   replyHeaders,
   quoted,
+  forwardedText,
+  forwardAttachments,
+  searchTextOf,
+  searchWords,
 };

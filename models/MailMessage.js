@@ -11,7 +11,7 @@ const AddressSchema = new Schema({ name: String, address: String }, { _id: false
 
 const AttachmentSchema = new Schema(
   {
-    id: String, // Resend's, to ask it for a download link
+    id: String, // Resend's, to ask it for a download link; none on one we forwarded: only its name and size are kept
     filename: String,
     contentType: String,
     size: Number,
@@ -42,6 +42,7 @@ const MailMessageSchema = new Schema(
     date: { type: Date, required: true }, // when it was received or sent
     read: Boolean, // in only
     sentBy: String, // out: the admin who sent it (their ADMINS address)
+    searchText: { type: String, select: false }, // what search looks through (services/mail.js), left out of reads
   },
   { collection: 'mail_messages', versionKey: false, timestamps: true }
 );

@@ -18,4 +18,6 @@ module.exports = {
   supportEmail: 'support@genlpt.com',
   // Privacy requests and the person in charge of personal information (the privacy policy)
   privacyEmail: 'privacy@genlpt.com',
+  // Where the people who run GenLPT sign in, in production (middleware/admin.js)
+  adminHost: 'admin.genlpt.com',
 };

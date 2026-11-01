@@ -27,6 +27,13 @@ test('request log: tokens and email addresses in the query are hidden', () => {
   assert.equal(redactUrl('/app?next=/app&token=abc#top'), '/app?next=/app&token=***#top');
 });
 
+test('request log: what is searched for in the mailbox is hidden, even inside a next=', () => {
+  assert.equal(redactUrl('/mail?box=support&q=ana%40example.com'), '/mail?box=support&q=***');
+  assert.equal(redactUrl('/mail?q=ana&box=support'), '/mail?q=***&box=support');
+  assert.equal(redactUrl('/login?next=%2Fmail%3Fbox%3Dsupport%26q%3Dana%2540example.com'), '/login?next=%2Fmail%3Fbox%3Dsupport%26q%3D***');
+  assert.equal(redactUrl('/mail?box=support&quality=high'), '/mail?box=support&quality=high');
+});
+
 test('request log: other URLs are logged as they are', () => {
   assert.equal(redactUrl('/api/sessions/123?ids=a,b'), '/api/sessions/123?ids=a,b');
   assert.equal(redactUrl('/app/tokens'), '/app/tokens');

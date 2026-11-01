@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 const brand = require('./config/brand');
 const limits = require('./config/limits');
 const { sessions, loadUser } = require('./middleware/auth');
+const { adminHost, onAdminHost } = require('./middleware/admin');
 const { securityHeaders } = require('./middleware/headers');
 const { requestLog } = require('./middleware/requestLog');
 const { turnstileSiteKey } = require('./services/turnstile');
@@ -49,6 +50,10 @@ app.use(express.urlencoded({ extended: true }));
 // Webhooks are signed over their body as sent: those routes get it as req.rawBody, besides the parsed one
 app.use(express.json({ verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
 
+// The admin section answers on its own hostname, and only there. Before the customers' sessions, which don't run on it.
+const adminRouter = require('./routes/admin');
+app.use(onAdminHost(adminRouter));
+
 // Signed-in user: req.user for routes, res.locals.user ({ name, email, … } or null) for views
 app.use(sessions, loadUser);
 
@@ -56,7 +61,6 @@ app.use(sessions, loadUser);
 const facades = [
   { name: 'Public', mount: '/', router: require('./routes/public') },
   { name: 'App', mount: '/app', router: require('./routes/app') },
-  { name: 'Admin', mount: '/admin', router: require('./routes/admin') },
   // Before the API, whose last route answers 404 to every /api path it doesn't know
   { name: 'Webhooks', mount: '/api/webhooks', router: require('./routes/webhooks') },
   { name: 'API', mount: '/api', router: require('./routes/api') },
@@ -96,9 +100,10 @@ if (process.env.MONGO_URI) {
 }
 
 const server = app.listen(PORT, () => {
-  const base = `http://localhost:${PORT}`;
-  console.log(`\nServer running at ${base}\n`);
-  facades.forEach(({ name, mount, router }) => {
+  const local = `http://localhost:${PORT}`;
+  console.log(`\nServer running at ${local}\n`);
+  const admin = { name: 'Admin', mount: '/', router: adminRouter, base: `http://${adminHost()}:${PORT}` };
+  [...facades, admin].forEach(({ name, mount, router, base = local }) => {
     console.log(`[${name}]`);
     (router.routes || []).forEach(({ method, path: p, label }) => {
       const full = (mount === '/' ? '' : mount) + (p === '/' && mount !== '/' ? '' : p);

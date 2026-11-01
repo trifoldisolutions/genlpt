@@ -20,4 +20,7 @@ const TEXT_MAX_CHARS = 1024 * 1024;
 const BODY_MAX_CHARS = 20000;
 const RECIPIENTS_MAX = 20;
 
-module.exports = { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX };
+// What a forward can carry: Resend takes 40 MB an email, counted after Base64, which adds a third
+const ATTACHMENTS_MAX_BYTES = 29 * 1024 * 1024;
+
+module.exports = { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, ATTACHMENTS_MAX_BYTES };

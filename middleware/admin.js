@@ -1,16 +1,24 @@
 const crypto = require('crypto');
 const argon2 = require('argon2');
+const brand = require('../config/brand');
 const { ADMIN_SESSION_HOURS } = require('../config/limits');
 
 // The people who run GenLPT are not GenLPT accounts: no row in users, no plan, no customer login. ADMINS lists them,
-// one "email:argon2-hash" per admin, separated by spaces (npm run admin:password prints one). Signing in at
-// /admin/login sets a cookie only /admin pages receive, valid ADMIN_SESSION_HOURS, signed with SESSION_SECRET. It names
-// the admin and a fingerprint of their hash, so a changed password or an admin taken off ADMINS ends their sessions.
-// Nothing here sends email: an admin's address is only their name to sign in with.
+// one "email:argon2-hash" per admin, separated by spaces (npm run admin:password prints one). Signing in at /login,
+// on the admin hostname, sets a cookie only that hostname receives, valid ADMIN_SESSION_HOURS, signed with
+// SESSION_SECRET. It names the admin and a fingerprint of their hash, so a changed password or an admin taken off
+// ADMINS ends their sessions. Nothing here sends email: an admin's address is only their name to sign in with.
 
 const COOKIE = 'genlpt_admin';
-const COOKIE_PATH = '/admin';
 const SESSION_MS = ADMIN_SESSION_HOURS * 60 * 60 * 1000;
+
+// The admin section has a hostname of its own: to the browser it's another site, so a script that ever got to run on a
+// customer page couldn't read it, the way it could a path of the same site. ADMIN_HOST sets it for a staging copy;
+// in development it's admin.localhost, which browsers send to this machine by themselves.
+const adminHost = () => (process.env.ADMIN_HOST || (process.env.NODE_ENV === 'production' ? brand.adminHost : 'admin.localhost')).toLowerCase();
+
+// handler for requests to the admin hostname; everything else goes on, to the customers' site
+const onAdminHost = (handler) => (req, res, next) => (req.hostname?.toLowerCase() === adminHost() ? handler(req, res, next) : next());
 
 // ADMINS → Map(email → hash). An entry without a colon, or whose hash isn't argon2's, is skipped (and said once).
 let warned = false;
@@ -70,7 +78,8 @@ function readCookie(req) {
   return null;
 }
 
-const cookieOptions = () => ({ httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: COOKIE_PATH });
+// No domain: it stays with the exact hostname that set it, and the customers' site never receives it
+const cookieOptions = () => ({ httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: '/' });
 
 // Whether this email and password are an admin's: the email, else null. An unknown email is checked against a decoy
 // hash, so the answer takes as long and doesn't say which addresses are admins.
@@ -95,12 +104,13 @@ function requireAdmin(req, res, next) {
     res.locals.admin = req.admin;
     return next();
   }
-  if (req.method === 'GET') return res.redirect(`/admin/login?next=${encodeURIComponent(req.originalUrl)}`);
-  res.status(401).type('text').send('Signed out: sign in again at /admin/login.');
+  if (req.method === 'GET') return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  res.status(401).type('text').send('Signed out: sign in again at /login.');
 }
 
-// Where sign-in leads: an admin page only
-const safeNext = (next) => (typeof next === 'string' && /^\/admin(?:[/?#]|$)/.test(next) && !next.startsWith('/admin/login') ? next : '/admin');
+// Where sign-in leads: a page of this hostname only. A path that starts with a letter can't be taken for another site,
+// as browsers take "//evil.example", "/\evil.example" and "/<tab>/evil.example".
+const safeNext = (next) => (typeof next === 'string' && (next === '/' || /^\/[a-z]/i.test(next)) && !/^\/login(?:[/?#]|$)/i.test(next) ? next : '/');
 
 module.exports = {
   admins,
@@ -112,5 +122,7 @@ module.exports = {
   signOut,
   requireAdmin,
   safeNext,
+  adminHost,
+  onAdminHost,
   COOKIE,
 };
