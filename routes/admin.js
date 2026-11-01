@@ -1,18 +1,43 @@
 const crypto = require('crypto');
 const express = require('express');
-const { sameOrigin } = require('../middleware/auth');
+const { sameOrigin, normalizeEmail } = require('../middleware/auth');
+const adminAuth = require('../middleware/admin');
+const { tooMany, tooManyMessage } = require('../middleware/rateLimit');
 const mail = require('../services/mail');
 const { MAILBOXES, BODY_MAX_CHARS } = require('../config/mail');
 
 const router = express.Router();
 
-// Admins only (role 'admin': npm run set-role -- <email> admin). Signed out: the login page, then back here.
-// Signed in without the role: a plain 404, so the page isn't advertised to every account.
-router.use((req, res, next) => {
-  if (req.user?.role === 'admin') return next();
-  if (!req.user) return res.redirect(`/app/login?next=${encodeURIComponent(req.originalUrl)}`);
-  res.status(404).render('public/404', { title: 'Not found' });
+// The admin section is apart from the customers' app: admins are the ADMINS list, not accounts, with their own
+// sign-in, cookie, layout and theme (middleware/admin.js, views/admin/partials/). A customer's login opens nothing here.
+
+const loginPage = (res, { next = '/admin', email = '', error = '', status = 200 } = {}) =>
+  res.status(status).render('admin/login', { title: 'Sign in', next, email, error });
+
+router.get('/login', (req, res) => loginPage(res, { next: adminAuth.safeNext(req.query.next) }));
+
+router.post('/login', sameOrigin, async (req, res) => {
+  const body = req.body || {};
+  const next = adminAuth.safeNext(body.next);
+  const email = normalizeEmail(body.email);
+  const wait = await tooMany(['adminLoginIp', req.ip], ['adminLoginEmail', email]);
+  if (wait) {
+    res.set('Retry-After', String(wait));
+    return loginPage(res, { next, email, error: tooManyMessage(wait), status: 429 });
+  }
+  const admin = await adminAuth.checkLogin(email, body.password);
+  if (!admin) return loginPage(res, { next, email, error: 'Wrong email or password.', status: 401 });
+  adminAuth.signIn(res, admin);
+  res.redirect(next);
 });
+
+router.post('/logout', sameOrigin, (req, res) => {
+  adminAuth.signOut(res);
+  res.redirect('/admin/login');
+});
+
+// Everything below: signed-in admins only (req.admin)
+router.use(adminAuth.requireAdmin);
 
 router.get('/', async (req, res) => {
   const unread = await mail.unreadCounts().catch(() => null);
@@ -64,6 +89,7 @@ async function mailPage(res, { boxKey, threadId = null, compose = false, unreadO
   const [counts, list] = await Promise.all([mail.unreadCounts(), writing ? null : mail.listThreads(box, { unreadOnly, before })]);
   res.status(status).render('admin/mail', {
     title: 'Mail',
+    nav: 'mail',
     mail,
     boxes: mail.BOXES,
     box,
@@ -105,7 +131,7 @@ router.post('/mail/send', sameOrigin, async (req, res) => {
   if (checked.error) return mailPage(res, { ...view, draft, formError: checked.error, status: 400 });
   let message;
   try {
-    message = await mail.send(checked.value, { sentBy: req.user._id });
+    message = await mail.send(checked.value, { sentBy: req.admin.email });
   } catch (err) {
     if (!(err instanceof mail.MailError)) throw err;
     return mailPage(res, { ...view, draft, formError: `Not sent. ${err.message}`, status: 502 });
@@ -146,7 +172,8 @@ router.get('/mail/messages/:id/attachments/:attachment', async (req, res) => {
 });
 
 router.routes = [
-  { method: 'GET', path: '/', label: 'Admin index (admins only)' },
+  { method: 'GET', path: '/login', label: 'Admin sign-in (ADMINS only)' },
+  { method: 'GET', path: '/', label: 'Admin index' },
   { method: 'GET', path: '/mail', label: 'Mail: the team’s mailbox' },
   { method: 'POST', path: '/mail/send', label: 'Mail: send a reply or a new email' },
   { method: 'POST', path: '/mail/sync', label: 'Mail: check Resend for new mail' },

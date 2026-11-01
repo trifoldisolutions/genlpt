@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const SpendDay = require('../models/SpendDay');
-const User = require('../models/User');
 const spend = require('../services/spend');
 const { spendAlert } = require('../services/email/templates');
 const { DAILY_SPEND } = require('../config/limits');
@@ -12,9 +11,8 @@ const REAL = {
   findOneAndUpdate: SpendDay.findOneAndUpdate,
   updateOne: SpendDay.updateOne,
   findById: SpendDay.findById,
-  find: User.find,
 };
-const ENV = ['RESEND_API_KEY', 'ALERT_EMAIL', 'NODE_ENV'];
+const ENV = ['RESEND_API_KEY', 'ALERT_EMAIL', 'NODE_ENV', 'ADMINS'];
 
 // spend_days in memory, for the few queries services/spend.js makes; emails go to a fake Resend
 function fakeDb({ admins = [] } = {}) {
@@ -39,7 +37,7 @@ function fakeDb({ admins = [] } = {}) {
     return { modifiedCount: 1 };
   };
   SpendDay.findById = (id) => lean(days.get(id));
-  User.find = () => lean(admins.map((email) => ({ email })));
+  process.env.ADMINS = admins.map((email) => `${email}:$argon2id$test`).join(' '); // where alerts go without ALERT_EMAIL
 
   const emails = [];
   process.env.RESEND_API_KEY = 're_test';
@@ -52,7 +50,6 @@ function fakeDb({ admins = [] } = {}) {
 
 test.afterEach(() => {
   Object.assign(SpendDay, { findOneAndUpdate: REAL.findOneAndUpdate, updateOne: REAL.updateOne, findById: REAL.findById });
-  User.find = REAL.find;
   global.fetch = realFetch;
   for (const k of ENV) delete process.env[k];
 });

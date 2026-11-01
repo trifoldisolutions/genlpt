@@ -2,12 +2,12 @@ const crypto = require('crypto');
 const SupportRequest = require('../models/SupportRequest');
 const Transaction = require('../models/Transaction');
 const BrainstormSession = require('../models/BrainstormSession');
-const User = require('../models/User');
 const { sendEmail } = require('./email');
 const templates = require('./email/templates');
 const usage = require('./usage');
 const { normalizeEmail, emailProblem } = require('../middleware/auth');
 const { SUPPORT_MESSAGE_MIN_CHARS, SUPPORT_MESSAGE_MAX_CHARS } = require('../config/limits');
+const { adminEmails } = require('../middleware/admin');
 
 // Settings → Help center's contact form (POST /api/support). Each message is saved first (models/SupportRequest.js),
 // then emailed to SUPPORT_INBOX with the sender as Reply-To, so the team answers from their own mail client.
@@ -81,18 +81,17 @@ async function submit(req, value) {
   }
 }
 
-// SUPPORT_INBOX's addresses (several: comma-separated), or every admin's
+// SUPPORT_INBOX's addresses (several: comma-separated), or every admin's (ADMINS)
 async function inbox() {
   const listed = (process.env.SUPPORT_INBOX || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (listed.length) return listed;
-  return (await User.find({ role: 'admin' }, { email: 1 }).lean()).map((u) => u.email);
+  return listed.length ? listed : adminEmails();
 }
 
 // Emails a saved request to the inbox, and marks it emailed once one copy went out. Returns whether one did.
 async function notify(request) {
   const to = await inbox();
   if (!to.length) {
-    console.error(`[support] no SUPPORT_INBOX and no admin account: request ${request.ref} was saved but not emailed`);
+    console.error(`[support] no SUPPORT_INBOX and no ADMINS: request ${request.ref} was saved but not emailed`);
     return false;
   }
   const email = templates.supportRequest(request);

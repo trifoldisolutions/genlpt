@@ -5,7 +5,6 @@ const mongoose = require('mongoose');
 const SupportRequest = require('../models/SupportRequest');
 const Transaction = require('../models/Transaction');
 const BrainstormSession = require('../models/BrainstormSession');
-const User = require('../models/User');
 const support = require('../services/support');
 const emails = require('../services/email/templates');
 const { SUPPORT_MESSAGE_MIN_CHARS, SUPPORT_MESSAGE_MAX_CHARS } = require('../config/limits');
@@ -15,7 +14,6 @@ const REAL = {
   updateOne: SupportRequest.updateOne,
   transactionExists: Transaction.exists,
   sessionExists: BrainstormSession.exists,
-  userFind: User.find,
 };
 
 test.afterEach(() => {
@@ -23,7 +21,6 @@ test.afterEach(() => {
   SupportRequest.updateOne = REAL.updateOne;
   Transaction.exists = REAL.transactionExists;
   BrainstormSession.exists = REAL.sessionExists;
-  User.find = REAL.userFind;
 });
 
 const id = () => String(new mongoose.Types.ObjectId());
@@ -134,10 +131,10 @@ test('without SUPPORT_INBOX the admins get it; with no one to send to, the reque
   const env = { ...process.env };
   t.after(() => { process.env = env; });
   delete process.env.SUPPORT_INBOX;
-  User.find = (filter) => ({ lean: async () => (filter.role === 'admin' ? [{ email: 'admin@example.com' }] : []) });
+  process.env.ADMINS = 'admin@example.com:$argon2id$test';
   assert.deepEqual(await support.inbox(), ['admin@example.com']);
 
-  User.find = () => ({ lean: async () => [] });
+  delete process.env.ADMINS;
   t.mock.method(console, 'error', () => {});
   let marked = false;
   SupportRequest.updateOne = async () => { marked = true; };

@@ -59,13 +59,13 @@ async function sessions(req, res, next) {
   sessionMiddleware(req, res, next);
 }
 
-// req.user for routes and res.locals.user for views: { _id, name, email, role, plan, subscription, createdAt },
+// req.user for routes and res.locals.user for views: { _id, name, email, plan, subscription, createdAt },
 // or null for a guest
 async function loadUser(req, res, next) {
   req.user = null;
   const id = req.session?.userId;
   if (id) {
-    req.user = await User.findById(id, { name: 1, email: 1, role: 1, plan: 1, subscription: 1, createdAt: 1 }).lean();
+    req.user = await User.findById(id, { name: 1, email: 1, plan: 1, subscription: 1, createdAt: 1 }).lean();
     if (!req.user) delete req.session.userId; // the account is gone
   }
   res.locals.user = req.user;

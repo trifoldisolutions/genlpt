@@ -1,0 +1,28 @@
+<%- include('partials/head') %>
+<%# Admin sign-in (routes/admin.js, middleware/admin.js): an ADMINS address and its password. Not the customers' login. %>
+<div class="mx-auto mt-8 max-w-sm sm:mt-16">
+  <p class="flex items-center gap-2 text-lg font-bold tracking-tight">
+    <span><%= appName %></span>
+    <span class="rounded-sm bg-zinc-900 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-zinc-50">ADMIN</span>
+  </p>
+  <h1 class="mt-6 text-2xl font-bold tracking-tight">Sign in</h1>
+  <p class="mt-1 text-base text-zinc-500">For the people who run <%= appName %>.</p>
+
+  <form method="post" action="/admin/login" class="mt-6 space-y-3 rounded-md border border-zinc-200 bg-surface p-5">
+    <input type="hidden" name="next" value="<%= next %>">
+    <% if (error) { %>
+    <p role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"><%= error %></p>
+    <% } %>
+    <label class="block">
+      <span class="label">Email</span>
+      <input type="email" name="email" value="<%= email || '' %>" autocomplete="username" maxlength="254" required <% if (!email) { %>autofocus<% } %> class="field mt-1">
+    </label>
+    <label class="block">
+      <span class="label">Password</span>
+      <input type="password" name="password" autocomplete="current-password" maxlength="<%= limits.PASSWORD_MAX_CHARS %>" required <% if (email) { %>autofocus<% } %> class="field mt-1">
+    </label>
+    <button type="submit" class="btn-primary !mt-5 w-full">Sign in</button>
+  </form>
+  <p class="mt-4 text-sm text-zinc-500">Forgot your password? Whoever manages <%= appName %>’s hosting can set a new one.</p>
+</div>
+<%- include('partials/foot') %>

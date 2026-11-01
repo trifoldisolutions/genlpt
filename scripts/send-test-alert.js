@@ -1,8 +1,9 @@
+// Named so the test runner (node --test, which runs every *-test.js) never picks it up: it really sends an email.
 // Sends a test of the daily AI spend alert (the real warning email, marked [Test]) to check it reaches its inbox:
 //   npm run alert:test                          to ALERT_EMAIL, the way the app sends alerts
 //   npm run alert:test -- alerts@genlpt.com     to the addresses given instead (production's, say)
-// It goes through Resend with this .env's RESEND_API_KEY. Without ALERT_EMAIL the app emails every admin, which needs
-// the database: name an address instead.
+// It goes through Resend with this .env's RESEND_API_KEY. Without ALERT_EMAIL the app emails the admins (ADMINS):
+// name an address instead.
 
 require('dotenv').config({ override: true, quiet: true });
 const { sendEmail } = require('../services/email');

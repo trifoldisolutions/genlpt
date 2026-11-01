@@ -14,7 +14,7 @@ const EXPAND_DEPTH = 2;
 const GUEST_HOURS = 3;
 
 // AI usage, Anthropic-style: a window opens on someone's first AI action and everything resets
-// USAGE_WINDOW_HOURS later. Per window, by plan (admin is a role, not a plan: admins get their plan's limits):
+// USAGE_WINDOW_HOURS later. Per window, by plan:
 //   runs        "Generate acronyms"
 //   words       "Generate words" and a branch's "More words"
 //   expansions  a word's "Expand"
@@ -36,7 +36,7 @@ const GUEST_IP_LIMITS = { runs: 6, words: 12, expansions: 30 };
 // What the whole platform may spend on AI in a day (USD, every plan together; days run midnight to midnight UTC).
 // Past a plan's pause line its AI actions are refused until the next day: guests first, then free accounts. Paid
 // accounts are never paused here (their own OpenRouter key's credit limit caps them). The first time a day's spend
-// crosses the warning or a pause line, an email goes to ALERT_EMAIL (or, without it, every admin).
+// crosses the warning or a pause line, an email goes to ALERT_EMAIL (or, without it, the ADMINS addresses).
 const DAILY_SPEND = {
   warning: 30,
   pause: { guest: 40, free: 50 },
@@ -75,7 +75,12 @@ const RATE_LIMITS = {
   mailDay: { limit: 10, minutes: 24 * 60 },
   supportHour: { limit: 5, minutes: 60 },
   supportDay: { limit: 10, minutes: 24 * 60 },
+  adminLoginIp: { limit: 10, minutes: 15 }, // the admin sign-in (middleware/admin.js)
+  adminLoginEmail: { limit: 5, minutes: 15 },
 };
+
+// An admin stays signed in this long, then signs in again (middleware/admin.js); it isn't pushed back by use.
+const ADMIN_SESSION_HOURS = 12;
 
 module.exports = {
   ANSWER_MIN_CHARS,
@@ -96,4 +101,5 @@ module.exports = {
   SUPPORT_MESSAGE_MIN_CHARS,
   SUPPORT_MESSAGE_MAX_CHARS,
   RATE_LIMITS,
+  ADMIN_SESSION_HOURS,
 };

@@ -73,7 +73,7 @@ const acronym = (letters, rank) => ({ letters, rank, source: 'llm', parts: [] })
 test('the export holds the account, its sessions as the app shows them, and its AI log, all keyed on the account', async () => {
   const now = new Date('2026-10-25T12:00:00Z');
   const createdAt = new Date('2026-10-02T09:00:00Z');
-  const user = { _id: userId, name: 'Ada', email: 'ada@example.com', plan: 'free', role: 'user', createdAt, emailVerifiedAt: createdAt, passwordHash: '$argon2id$secret' };
+  const user = { _id: userId, name: 'Ada', email: 'ada@example.com', plan: 'free', createdAt, emailVerifiedAt: createdAt, passwordHash: '$argon2id$secret' };
   const session = new BrainstormSession({
     owner,
     title: 'Farm app',
@@ -102,7 +102,7 @@ test('the export holds the account, its sessions as the app shows them, and its 
 
   assert.equal(data.app, 'GenLPT');
   assert.equal(data.exportedAt, now.toISOString());
-  assert.deepEqual(data.account, { name: 'Ada', email: 'ada@example.com', plan: 'free', role: 'user', createdAt, emailVerifiedAt: createdAt });
+  assert.deepEqual(data.account, { name: 'Ada', email: 'ada@example.com', plan: 'free', createdAt, emailVerifiedAt: createdAt });
   assert.ok(!JSON.stringify(data).includes('argon2'), 'never the password hash');
 
   const [exported] = data.sessions;
@@ -122,7 +122,7 @@ test('the export shows a subscription’s state only, and nothing for an account
   const start = new Date('2026-10-25T00:00:00Z');
   const end = new Date('2026-11-25T00:00:00Z');
   const subscription = { provider: 'stripe', customerId: 'cus_1', subscriptionId: 'sub_1', status: 'active', startedAt: start, currentPeriodEnd: end };
-  fakeExport({ user: { _id: userId, email: 'ada@example.com', plan: 'paid', role: 'user', subscription } });
+  fakeExport({ user: { _id: userId, email: 'ada@example.com', plan: 'paid', subscription } });
   const data = await account.exportData(userId);
   assert.deepEqual(data.account.subscription, { status: 'active', startedAt: start, currentPeriodEnd: end });
   assert.equal(data.account.plan, 'paid');

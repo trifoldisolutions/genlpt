@@ -1,0 +1,58 @@
+<%
+  // Every admin page, apart from the public site and the app: its own header, its own theme (System, Light or Dark,
+  // kept under admin.theme, public/js/theme.js and admin.js), no public links or footer. Signed out (the sign-in page):
+  // no header. nav: the section open, for its link.
+  const signedIn = !!locals.admin;
+  const sections = [{ key: 'mail', label: 'Mail', href: '/admin/mail' }];
+%>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title><%= locals.title ? `${title} · ${appName} Admin` : `${appName} Admin` %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=SUSE:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/output.css">
+  <script src="/js/theme.js" data-key="admin.theme" data-themes="system light dark"></script>
+  <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2/dist/iconify-icon.min.js"></script>
+</head>
+<body class="min-h-dvh bg-zinc-50 font-sans text-zinc-900 antialiased">
+<% if (signedIn) { %>
+  <header class="border-b border-zinc-200 bg-surface">
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
+      <div class="flex items-center gap-6">
+        <a href="/admin" class="flex items-center gap-2 font-bold tracking-tight">
+          <span><%= appName %></span>
+          <span class="rounded-sm bg-zinc-900 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-zinc-50">ADMIN</span>
+        </a>
+        <nav aria-label="Admin" class="flex gap-1">
+          <% sections.forEach((s) => { %>
+          <a href="<%= s.href %>" <% if (locals.nav === s.key) { %>aria-current="page"<% } %> class="rounded-md px-2.5 py-1.5 text-base text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 aria-[current=page]:bg-zinc-100 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"><%= s.label %></a>
+          <% }) %>
+        </nav>
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 text-sm text-zinc-500">
+          <iconify-icon icon="boxicons:sun" width="16" height="16" aria-hidden="true"></iconify-icon>
+          <span class="sr-only">Theme</span>
+          <select id="admin-theme" class="meta-select">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <span class="hidden text-sm text-zinc-500 sm:inline" title="Signed in as <%= admin.email %>"><%= admin.email %></span>
+        <form method="post" action="/admin/logout">
+          <button type="submit" class="btn-ghost text-sm">
+            <iconify-icon icon="boxicons:arrow-out-right-square-half" width="16" height="16" aria-hidden="true"></iconify-icon>
+            <span>Sign out</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </header>
+<% } %>
+  <main class="mx-auto max-w-6xl px-4 py-8">

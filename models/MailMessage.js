@@ -41,7 +41,7 @@ const MailMessageSchema = new Schema(
     authentication: { spf: String, dkim: String, dmarc: String }, // in: what the receiving server found
     date: { type: Date, required: true }, // when it was received or sent
     read: Boolean, // in only
-    sentBy: Schema.Types.ObjectId, // out: the admin who sent it
+    sentBy: String, // out: the admin who sent it (their ADMINS address)
   },
   { collection: 'mail_messages', versionKey: false, timestamps: true }
 );

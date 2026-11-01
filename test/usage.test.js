@@ -8,11 +8,10 @@ const { reformulateAnswer, QUESTIONS } = require('../services/llm/prompts');
 
 const HOUR = 60 * 60 * 1000;
 
-test('the plan comes from the account: none is a guest, admin is a role and gets its plan', () => {
+test('the plan comes from the account: none is a guest', () => {
   assert.equal(planOf({ user: null }), 'guest');
   assert.equal(planOf({ user: { plan: 'free' } }), 'free');
   assert.equal(planOf({ user: { plan: 'paid' } }), 'paid');
-  assert.equal(planOf({ user: { plan: 'free', role: 'admin' } }), 'free');
 });
 
 test('billing: guests and free accounts pay nothing, the paid plan has a monthly price', () => {

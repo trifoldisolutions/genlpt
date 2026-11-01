@@ -12,9 +12,9 @@
     "tw": "tailwindcss -i ./src/input.css -o ./public/output.css --watch",
     "test": "node --test",
     "dev:all": "concurrently -k -n TW,SERVER -c yellow,cyan \"npm run tw\" \"npm run dev\"",
-    "set-role": "node scripts/set-role.js",
     "usage:report": "node scripts/usage-report.js",
-    "alert:test": "node scripts/alert-test.js"
+    "alert:test": "node scripts/send-test-alert.js",
+    "admin:password": "node scripts/admin-password.js"
   },
   "keywords": [],
   "author": "",

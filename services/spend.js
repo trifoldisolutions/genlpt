@@ -1,8 +1,8 @@
 const SpendDay = require('../models/SpendDay');
-const User = require('../models/User');
 const { sendEmail } = require('./email');
 const templates = require('./email/templates');
 const { DAILY_SPEND } = require('../config/limits');
+const { adminEmails } = require('../middleware/admin');
 
 // The platform's daily AI spend (DAILY_SPEND in config/limits.js). Each AI action's cost is added to its day once
 // it's done (routes/api.js); a plan past its pause line gets no AI until the day ends, at midnight UTC.
@@ -33,18 +33,17 @@ async function check(plan, now = new Date()) {
 // ALERT_EMAIL's addresses (several: comma-separated)
 const alertAddresses = () => (process.env.ALERT_EMAIL || '').split(',').map((s) => s.trim()).filter(Boolean);
 
-// ALERT_EMAIL, or every admin's address
+// ALERT_EMAIL, or every admin's address (ADMINS)
 async function recipients() {
   const listed = alertAddresses();
-  if (listed.length) return listed;
-  return (await User.find({ role: 'admin' }, { email: 1 }).lean()).map((u) => u.email);
+  return listed.length ? listed : adminEmails();
 }
 
 async function alert(line, day) {
   const email = templates.spendAlert({ line, cost: day.cost, byPlan: day.byPlan || {}, limits: DAILY_SPEND });
   console.warn(`[spend] ${email.subject} (${day._id}: $${day.cost.toFixed(4)})`);
   const to = await recipients();
-  if (!to.length) return console.warn('[spend] no ALERT_EMAIL and no admin account: the alert was not emailed');
+  if (!to.length) return console.warn('[spend] no ALERT_EMAIL and no ADMINS: the alert was not emailed');
   await Promise.all(to.map((address) => sendEmail({ to: address, ...email })));
 }
 

@@ -48,7 +48,6 @@ async function exportData(userId, now = new Date()) {
       name: user.name,
       email: user.email,
       plan,
-      role: user.role,
       createdAt: user.createdAt,
       emailVerifiedAt: user.emailVerifiedAt,
       ...(user.termsAcceptedAt ? { termsAcceptedAt: user.termsAcceptedAt } : {}),

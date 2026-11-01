@@ -4,8 +4,7 @@ const argon2 = require('argon2');
 
 const { Schema } = mongoose;
 
-// What someone may do (admin pages) is kept apart from what they paid for: an admin can be on any plan.
-const ROLES = ['user', 'admin'];
+// Customers only: the people who run GenLPT aren't accounts here (ADMINS, middleware/admin.js).
 const PLANS = ['free', 'paid'];
 
 // Written only by the payment webhook (provider not chosen yet); copied from the provider as-is.
@@ -31,7 +30,6 @@ const UserSchema = new Schema(
     deleteAfter: Date, // unconfirmed accounts only: deleted at this time (TTL index) unless the email gets confirmed
     // When signup accepted the terms of service; compared with config/legal.js UPDATED, it says which version
     termsAcceptedAt: Date,
-    role: { type: String, enum: ROLES, default: 'user' },
     plan: { type: String, enum: PLANS, default: 'free' },
     subscription: SubscriptionSchema,
   },
@@ -63,5 +61,4 @@ UserSchema.statics.checkNobody = async function checkNobody(password) {
 const User = mongoose.model('User', UserSchema);
 
 module.exports = User;
-module.exports.ROLES = ROLES;
 module.exports.PLANS = PLANS;
