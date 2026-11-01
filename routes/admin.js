@@ -111,7 +111,7 @@ async function mailPage(res, { boxKey, threadId = null, compose = false, reply =
   const writing = !!forwarding || (opened ? reply : compose);
   const unreadParam = unreadOnly ? { unread: '1' } : {};
   res.status(status).render('admin/mail', {
-    title: 'Mail',
+    title: 'Internal Mail Services',
     nav: 'mail',
     fill: true,
     // The header's search bar (views/admin/partials/head.ejs). A new search starts from the top of the folder.

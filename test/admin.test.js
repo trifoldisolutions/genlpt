@@ -57,6 +57,16 @@ test('admin: a changed password or an admin taken off ADMINS ends their sessions
   assert.equal(adminAuth.readSession(value, adminAuth.admins('')), null);
 });
 
+test('admin: shown by the name and role ADMIN_PROFILES gives, else a name made from the address', () => {
+  const profiles = ' ops@example.dev = Ana Lima | Super admin ; Bo@Example.dev=Bo ;nameless@example.dev=|Support';
+  assert.deepEqual(adminAuth.adminProfile('ops@example.dev', profiles), { name: 'Ana Lima', role: 'Super admin', initials: 'AL' });
+  assert.deepEqual(adminAuth.adminProfile('bo@example.dev', profiles), { name: 'Bo', role: 'Admin', initials: 'B' });
+  assert.deepEqual(adminAuth.adminProfile('nameless@example.dev', profiles), { name: 'Nameless', role: 'Support', initials: 'N' });
+  assert.deepEqual(adminAuth.adminProfile('trifoldi.admin000@trifoldi.dev', ''), { name: 'Trifoldi Admin000', role: 'Admin', initials: 'TA' });
+  assert.deepEqual(adminAuth.adminProfile('other@example.dev', profiles), { name: 'Other', role: 'Admin', initials: 'O' });
+  assert.equal(adminAuth.adminProfile('op@example.dev', 'ops@example.dev=Ana').name, 'Op', 'the whole address has to match');
+});
+
 test('admin: only an admin’s own password signs them in', async () => {
   assert.equal(await adminAuth.checkLogin(' OPS@example.dev ', PASSWORD), 'ops@example.dev');
   assert.equal(await adminAuth.checkLogin('ops@example.dev', 'wrong'), null);
@@ -137,8 +147,12 @@ test('admin sign-in: the right password sets a strict cookie for this hostname o
     const index = await get('/', session);
     assert.equal(index.status, 200);
     const text = await index.text();
-    assert.match(text, /ops@example.dev/, 'the header names who is signed in');
-    assert.match(text, /action="\/logout"/);
+    assert.match(text, /popovertarget="admin-menu"[\s\S]*>O<[\s\S]*>Ops<[\s\S]*>Admin</, 'the button shows the avatar, name and role');
+    const menu = text.slice(text.indexOf('id="admin-menu"'));
+    assert.match(menu, /ops@example.dev/, 'the menu names who is signed in');
+    for (const theme of ['system', 'light', 'dark']) assert.match(menu, new RegExp(`name="admin-theme" value="${theme}"`));
+    assert.match(menu, /action="\/logout"/, 'and signs out');
+    assert.match(text, />Internal Mail Services</);
     assert.doesNotMatch(text, /(href|action)="\/admin/, 'no links to the old paths');
 
     const missing = await get('/nothing-here', session);

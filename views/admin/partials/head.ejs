@@ -5,7 +5,12 @@
   // search: the page's search bar, in the header (its own row on a phone, where phone says whether it shows at all).
   const signedIn = !!locals.admin;
   const fill = !!locals.fill;
-  const sections = [{ key: 'mail', label: 'Mail', href: '/mail' }];
+  const sections = [{ key: 'mail', label: 'Internal Mail Services', href: '/mail' }];
+  const themes = [
+    { value: 'system', label: 'System', icon: 'desktop' },
+    { value: 'light', label: 'Light', icon: 'sun' },
+    { value: 'dark', label: 'Dark', icon: 'moon' },
+  ];
 %>
 <!DOCTYPE html>
 <html lang="en">
@@ -24,15 +29,15 @@
 <body class="<%= fill ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh' %> bg-zinc-50 font-sans text-zinc-900 antialiased">
 <% if (signedIn) { %>
   <header class="shrink-0 border-b border-zinc-200 bg-surface">
-    <div class="<%= fill ? '' : 'mx-auto max-w-6xl' %> flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
-      <div class="flex items-center gap-6">
+    <div class="<%= fill ? '' : 'mx-auto max-w-6xl' %> flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 lg:gap-x-6">
+      <div class="flex items-center gap-3 lg:gap-6">
         <a href="/" class="flex items-center gap-2 font-bold tracking-tight">
           <span><%= appName %></span>
-          <span class="rounded-sm bg-zinc-900 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-zinc-50">ADMIN</span>
+          <span class="hidden rounded-sm bg-zinc-900 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-zinc-50 sm:inline">ADMIN</span>
         </a>
         <nav aria-label="Admin" class="flex gap-1">
           <% sections.forEach((s) => { %>
-          <a href="<%= s.href %>" <% if (locals.nav === s.key) { %>aria-current="page"<% } %> class="rounded-md px-2.5 py-1.5 text-base text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 aria-[current=page]:bg-zinc-100 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"><%= s.label %></a>
+          <a href="<%= s.href %>" <% if (locals.nav === s.key) { %>aria-current="page"<% } %> class="rounded-md px-2 py-1.5 text-sm text-zinc-600 sm:px-2.5 sm:text-base hover:bg-zinc-100 hover:text-zinc-900 aria-[current=page]:bg-zinc-100 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"><%= s.label %></a>
           <% }) %>
         </nav>
       </div>
@@ -50,20 +55,41 @@
         </div>
       </form>
       <% } %>
-      <div class="flex items-center gap-3">
-        <label class="flex items-center gap-1.5 text-sm text-zinc-500">
-          <iconify-icon icon="boxicons:sun" width="16" height="16" aria-hidden="true"></iconify-icon>
-          <span class="sr-only">Theme</span>
-          <select id="admin-theme" class="meta-select">
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <span class="hidden text-sm text-zinc-500 sm:inline" title="Signed in as <%= admin.email %>"><%= admin.email %></span>
-        <form method="post" action="/logout">
-          <button type="submit" class="btn-ghost text-sm">
-            <iconify-icon icon="boxicons:arrow-out-right-square-half" width="16" height="16" aria-hidden="true"></iconify-icon>
+      <%# Who's signed in, and the menu it opens. A popover: the browser closes it on a click outside or Esc. public/js/admin.js puts it under the button and runs the theme. %>
+      <button type="button" popovertarget="admin-menu" class="flex items-center gap-2 rounded-md p-1 text-left hover:bg-zinc-100 sm:pr-2">
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cerise-50 text-sm font-semibold text-cerise-700" aria-hidden="true"><%= admin.initials %></span>
+        <span class="sr-only sm:not-sr-only">
+          <span class="block max-w-32 truncate font-medium text-zinc-900 lg:max-w-48"><%= admin.name %></span>
+          <span class="block max-w-32 truncate text-sm text-zinc-500 lg:max-w-48"><%= admin.role %></span>
+        </span>
+        <iconify-icon icon="boxicons:chevron-down" width="18" height="18" class="text-zinc-500" aria-hidden="true"></iconify-icon>
+      </button>
+      <div id="admin-menu" popover class="inset-auto m-0 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-zinc-200 bg-surface p-1.5 text-zinc-700 shadow-lg">
+        <div class="flex items-center gap-3 p-2">
+          <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-cerise-50 font-semibold text-cerise-700" aria-hidden="true"><%= admin.initials %></span>
+          <div class="min-w-0">
+            <p class="font-semibold break-words text-zinc-900"><%= admin.name %></p>
+            <p class="text-sm break-words text-zinc-500"><%= admin.role %></p>
+            <p class="text-sm break-all text-zinc-500"><%= admin.email %></p>
+          </div>
+        </div>
+        <div class="mt-1 border-t border-zinc-200 p-2">
+          <fieldset>
+            <legend class="text-sm text-zinc-500">Theme</legend>
+            <div class="mt-1.5 grid grid-cols-3 gap-1">
+              <% themes.forEach((theme) => { %>
+              <label class="flex cursor-pointer flex-col items-center gap-1 rounded-md border border-zinc-200 px-1 py-2 text-sm hover:border-zinc-300 has-checked:border-cerise-500 has-checked:bg-cerise-50 has-checked:text-cerise-700 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-cerise-500">
+                <input type="radio" name="admin-theme" value="<%= theme.value %>" class="sr-only">
+                <iconify-icon icon="boxicons:<%= theme.icon %>" width="18" height="18" aria-hidden="true"></iconify-icon>
+                <span><%= theme.label %></span>
+              </label>
+              <% }) %>
+            </div>
+          </fieldset>
+        </div>
+        <form method="post" action="/logout" class="mt-1 border-t border-zinc-200 pt-1">
+          <button type="submit" class="btn-ghost w-full">
+            <iconify-icon icon="boxicons:arrow-out-right-square-half" width="18" height="18" aria-hidden="true"></iconify-icon>
             <span>Sign out</span>
           </button>
         </form>

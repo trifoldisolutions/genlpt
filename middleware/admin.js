@@ -39,6 +39,20 @@ function admins(value = process.env.ADMINS) {
 
 const adminEmails = () => [...admins().keys()];
 
+// How an admin is shown, in the header's menu: ADMIN_PROFILES, one "email=Display name|Role" per admin, separated by
+// semicolons; else a name made from their address, and the role Admin. The role is only a label: every admin can do
+// the same things.
+function adminProfile(email, value = process.env.ADMIN_PROFILES) {
+  const entry = String(value || '').split(';').map((e) => e.split('=')).find(([address]) => address.trim().toLowerCase() === email);
+  const [given, role] = entry ? entry.slice(1).join('=').split('|').map((part) => part.trim()) : [];
+  const name = given || email.split('@')[0].split(/[._+-]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(' ');
+  return {
+    name,
+    role: role || 'Admin',
+    initials: name.split(/\s+/).slice(0, 2).map((word) => [...word][0]).join('').toUpperCase(),
+  };
+}
+
 // The key that signs admin cookies: SESSION_SECRET's, kept apart from the customer login's own use of it
 let devKey = null;
 function signingKey() {
@@ -96,11 +110,11 @@ function signIn(res, email, list = admins()) {
 
 const signOut = (res) => res.clearCookie(COOKIE, cookieOptions());
 
-// req.admin ({ email }) and res.locals.admin for the admin pages; signed out: to the sign-in, then back
+// req.admin ({ email, name, role, initials }) and res.locals.admin for the admin pages; signed out: to the sign-in, then back
 function requireAdmin(req, res, next) {
   const session = readSession(readCookie(req));
   if (session) {
-    req.admin = { email: session.email };
+    req.admin = { email: session.email, ...adminProfile(session.email) };
     res.locals.admin = req.admin;
     return next();
   }
@@ -115,6 +129,7 @@ const safeNext = (next) => (typeof next === 'string' && (next === '/' || /^\/[a-
 module.exports = {
   admins,
   adminEmails,
+  adminProfile,
   sessionValue,
   readSession,
   checkLogin,

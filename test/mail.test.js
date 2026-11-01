@@ -252,7 +252,7 @@ test('mail: a reply still answers its email in its thread', async (t) => {
 function drawMail(state = {}) {
   const box = mail.boxOf('support');
   return ejs.renderFile(path.join(__dirname, '../views/admin/mail.ejs'), {
-    appName: 'GenLPT', admin: { email: 'ops@example.dev' }, title: 'Mail', nav: 'mail', fill: true,
+    appName: 'GenLPT', admin: { email: 'ops@example.dev', name: 'Ops', role: 'Admin', initials: 'O' }, title: 'Mail', nav: 'mail', fill: true,
     mail, boxes: mail.BOXES, box, counts: { all: 2, support: 2 }, mailboxes: MAILBOXES, bodyMax: 20000,
     list: { threads: [], more: false }, opened: null, compose: false, forwarding: null, q: '', unreadOnly: false, before: null, form: null, formError: null, toasts: [],
     ...state,
