@@ -29,6 +29,8 @@ const UserSchema = new Schema(
     passwordHash: { type: String, required: true, select: false }, // argon2id; load with .select('+passwordHash')
     emailVerifiedAt: { type: Date, default: null }, // set by the confirmation link (or a password reset); needed to log in
     deleteAfter: Date, // unconfirmed accounts only: deleted at this time (TTL index) unless the email gets confirmed
+    // When signup accepted the terms of service; compared with config/legal.js UPDATED, it says which version
+    termsAcceptedAt: Date,
     role: { type: String, enum: ROLES, default: 'user' },
     plan: { type: String, enum: PLANS, default: 'free' },
     subscription: SubscriptionSchema,

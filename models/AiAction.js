@@ -59,3 +59,4 @@ const AiAction = mongoose.model('AiAction', AiActionSchema);
 module.exports = AiAction;
 module.exports.KINDS = KINDS;
 module.exports.VARIANTS = VARIANTS;
+module.exports.KEEP_DAYS = KEEP_DAYS;

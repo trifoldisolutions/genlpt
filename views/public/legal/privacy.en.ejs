@@ -1,0 +1,137 @@
+<%
+  const op = brand.operator;
+  const hours = (n) => `${n} hour${n === 1 ? '' : 's'}`;
+  const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
+  const mail = (address) => `<a href="mailto:${address}">${address}</a>`;
+%>
+<p class="lead">This policy explains what <%= appName %> collects about you, why, who else sees it, how long it’s kept, and how you can see, change or delete it. We wrote it to be read, not skimmed past.</p>
+
+<h2 id="who">Who we are</h2>
+<p><%= appName %> (“we”, “us”) is a business based in the United States, not yet incorporated. We decide how the information described here is used, and we’re responsible for it.</p>
+<p>The person in charge of protecting personal information is the owner of <%= appName %>. For any question or request about your information, write to <%- mail(brand.privacyEmail) %>.</p>
+
+<h2 id="collect">What we collect</h2>
+<h3>Whenever you use <%= appName %></h3>
+<ul>
+  <li><strong>Your sessions:</strong> your answers to the four questions, the words on your map, your acronyms and their scores, and each session’s title, language and AI model.</li>
+  <li><strong>Usage counts:</strong> how many AI actions you’ve taken in the current usage period, so each plan’s limits can apply.</li>
+  <li><strong>An AI log:</strong> for each AI action, its kind, when it happened, whether it worked, how long it took and what it cost us. It doesn’t hold what you typed.</li>
+  <li><strong>Server logs:</strong> your IP address, the pages and requests you make, their date and time, and errors. Links that carry a code or an email address have those parts removed first.</li>
+</ul>
+
+<h3>As a guest</h3>
+<ul>
+  <li>A random identifier, in a cookie, that ties your sessions to this browser. We store only a scrambled (hashed) form of it.</li>
+  <li>Your usage counts are also kept per IP address, so clearing cookies doesn’t reset them. The address is stored hashed.</li>
+</ul>
+
+<h3>With an account</h3>
+<ul>
+  <li>Your name and email address.</li>
+  <li>Your password, stored only as an argon2 hash: nobody, us included, can read it back.</li>
+  <li>When you signed up, confirmed your email address and accepted the terms; your plan.</li>
+</ul>
+
+<h3>With the paid plan</h3>
+<ul>
+  <li>Your subscription’s status and dates, and a record of each payment: amount, currency, status, date and a link to its receipt.</li>
+  <li>Your card details go to our payment provider, never to us: we don’t see or store your card number. We’ll name the provider here before the paid plan opens.</li>
+</ul>
+
+<h3>When you write to us</h3>
+<ul>
+  <li><strong>From the Help center:</strong> your message and its topic, your email address, your plan, the session open when you sent it, the payment it’s about if you chose one, and your browser’s name and version.</li>
+  <li><strong>By email:</strong> your message and its attachments, your name and address as your mail app sends them, and the other addresses it went to.</li>
+</ul>
+
+<h3>To stop abuse</h3>
+<ul>
+  <li>Log-ins, sign-ups, password resets, account emails and messages to us are counted per IP address and per email address typed, both stored hashed, to slow down anyone trying too often.</li>
+</ul>
+
+<p>We don’t collect your location, contacts or payment card number, and we use no analytics, advertising or tracking tools.</p>
+
+<h2 id="use">How we use it</h2>
+<p>We use your information only for the purposes below. If you’re in the European Economic Area or the United Kingdom, each comes with its legal basis.</p>
+<ul>
+  <li><strong>To provide <%= appName %>:</strong> keep your sessions and account, make words and acronyms, check domain names. <em>Basis: our contract with you.</em></li>
+  <li><strong>To send the emails you need:</strong> confirming your address, resetting your password, telling you about a change of email address. We don’t send marketing emails. <em>Basis: our contract with you.</em></li>
+  <li><strong>To answer you</strong> when you write to us. <em>Basis: our contract with you, or our legitimate interest in helping people who contact us.</em></li>
+  <li><strong>To keep <%= appName %> safe and fair:</strong> bot checks, rate limits, usage limits, and finding and fixing errors. <em>Basis: our legitimate interest in protecting the service and its users.</em></li>
+  <li><strong>To run the business:</strong> the AI log tells us what each plan costs, so we can set fair prices and keep spending in check. <em>Basis: our legitimate interest in running a sustainable service.</em></li>
+  <li><strong>To meet legal obligations,</strong> such as keeping payment records or answering a lawful request from an authority. <em>Basis: legal obligation.</em></li>
+</ul>
+<p>The AI scores acronyms, not people: <%= appName %> makes no automated decisions about you that have legal or similarly significant effects.</p>
+
+<h2 id="ai">Your answers and the AI</h2>
+<p>To suggest words, name and score acronyms, suggest a title and reformulate answers, we send your session’s answers and words to AI models through OpenRouter (OpenRouter, Inc., United States). We send nothing that identifies your account: not your name, nor your email address.</p>
+<p>OpenRouter passes each request to the company that runs the model, such as OpenAI. On our account, OpenRouter’s logging is off, and so is the option that would let it use requests to improve its service, so it doesn’t keep the text you send. There are two exceptions: it screens every request for child sexual abuse material and keeps what it flags, and it sorts a small sample of requests into topics, anonymously.</p>
+<p>Our account also lets OpenRouter use only providers that don’t train AI models on requests or publish them. Neither do we: your answers aren’t used to train any AI model. Some providers keep the text for a limited time, for example to detect abuse. <a href="https://openrouter.ai/models" rel="noopener">OpenRouter’s model pages</a> show each provider’s policy.</p>
+<p>Still, don’t put anything in your answers that must stay confidential, such as trade secrets or other people’s personal information.</p>
+
+<h2 id="share">Who else sees it</h2>
+<p>We don’t sell your personal information, and we don’t share it for advertising. These providers handle it for us, each only for what they do:</p>
+<ul>
+  <li><strong>Railway</strong> (Railway Corp., United States) runs our servers and keeps the server logs.</li>
+  <li><strong>MongoDB Atlas</strong> (MongoDB, Inc., United States) stores our database: everything listed above except the server logs.</li>
+  <li><strong>OpenRouter</strong> and the model providers it uses receive your sessions’ answers and words, as described above.</li>
+  <li><strong>Resend</strong> (Resend, Inc., United States) sends our emails and receives those sent to our addresses: it handles your email address and those emails.</li>
+  <li><strong>Cloudflare</strong> (Cloudflare, Inc., United States) checks that a person, not a bot, is signing up or sending a guest’s message. It sees your IP address and details about your browser.</li>
+  <li><strong>Google Fonts</strong> (Google LLC, United States) serves our font, and <strong>jsDelivr</strong> and <strong>Iconify</strong> serve our icons. Your browser loads them directly, so they see your IP address and browser.</li>
+  <li><strong>Our payment provider</strong>, once the paid plan opens, handles payments and your card details.</li>
+</ul>
+<p>To check whether an acronym’s domain names are free, our server asks each registry about the name alone (like sera.com), with nothing about you.</p>
+<p>We may also disclose information when the law requires it, to protect someone’s safety or our rights, or to a buyer if the business is sold, in which case this policy keeps applying to it.</p>
+
+<h2 id="where">Where it’s processed</h2>
+<p>We and the providers above are in the United States, so your information is stored and processed there, where privacy laws may differ from yours. For information that comes from the European Economic Area, the United Kingdom, Switzerland or Québec, we rely on the safeguards our providers offer, such as standard contractual clauses or certification under the EU-U.S. Data Privacy Framework.</p>
+
+<h2 id="keep">How long we keep it</h2>
+<ul>
+  <li><strong>Guest sessions:</strong> erased <%= hours(limits.GUEST_HOURS) %> after they were last used. They can’t be brought back.</li>
+  <li><strong>Your account and its sessions:</strong> until you delete them. An account whose email address is never confirmed is deleted after <%= days(limits.UNVERIFIED_DAYS) %>.</li>
+  <li><strong>Logins:</strong> end <%= days(limits.LOGIN_DAYS) %> after your last visit.</li>
+  <li><strong>Links in our emails:</strong> stop working after <%= hours(limits.VERIFY_LINK_HOURS) %> (confirmation) or <%= hours(limits.RESET_LINK_HOURS) %> (password reset), or once used.</li>
+  <li><strong>Usage counts:</strong> deleted when the usage period ends, <%= hours(limits.USAGE_WINDOW_HOURS) %> after it began.</li>
+  <li><strong>Abuse counters:</strong> deleted when their time window ends, within <%= hours(rateLimitHours) %>.</li>
+  <li><strong>The AI log:</strong> <%= days(aiLogDays) %>. When you delete your account, its entries are cut loose from it and kept only as anonymous costs.</li>
+  <li><strong>Messages to us:</strong> emails to our addresses, our replies, and the copy of each Help center message sent to our support address are kept as long as we need them to answer and follow up. The Help center’s own record of a message is deleted with your account. Attachments stay with Resend, which deletes them after 30 days.</li>
+  <li><strong>Payment records:</strong> deleted with your account. The payment provider keeps its own, as the law requires.</li>
+  <li><strong>Server logs:</strong> deleted by Railway after <%= days(legal.SERVER_LOG_DAYS) %> at most.</li>
+</ul>
+
+<h2 id="cookies">Cookies and browser storage</h2>
+<ul>
+  <li><code>sid</code> keeps you logged in. It’s set when you log in and lasts <%= days(limits.LOGIN_DAYS) %> after your last visit.</li>
+  <li><code>guest_id</code> ties a guest’s sessions to this browser. It’s set when a guest starts their first session and lasts <%= hours(limits.GUEST_HOURS) %> after their last use.</li>
+  <li>Your browser’s local storage keeps your settings on this device, such as the theme, the graph style and the language new sessions start in. It isn’t sent to us.</li>
+</ul>
+<p>All of these are needed for <%= appName %> to work or to remember your choices, which is why there’s no cookie banner. Cloudflare’s bot check may store what it needs to tell people from bots. Since we don’t track you across sites, we treat every visitor the same, whether or not their browser sends a Do Not Track or Global Privacy Control signal.</p>
+
+<h2 id="rights">Your rights</h2>
+<p>Wherever you live, you can:</p>
+<ul>
+  <li><strong>Get a copy of your data:</strong> in Settings → Account, Download my data saves everything we keep about your account as a JSON file.</li>
+  <li><strong>Correct it:</strong> change your name, email address and password in Settings → Account, and edit or delete sessions in the app.</li>
+  <li><strong>Delete it:</strong> in Settings → Account, Delete account erases your account and all of its sessions, at once and for good.</li>
+  <li><strong>Ask us for anything else,</strong> such as to stop a use of your information or to get a guest’s data, at <%- mail(brand.privacyEmail) %>. We answer within 30 days, and may first need to check that the information is yours.</li>
+</ul>
+<p>Depending on where you live, the law gives you more:</p>
+<ul>
+  <li><strong>European Economic Area, United Kingdom, Switzerland:</strong> the rights to access, rectify and erase your data, to restrict or object to its use, to take it elsewhere, and to complain to your data protection authority.</li>
+  <li><strong>Québec:</strong> the rights to access and rectify your information, to have it de-indexed, to take it elsewhere, and to complain to the Commission d’accès à l’information du Québec.</li>
+  <li><strong>California and other U.S. states with privacy laws:</strong> the rights to know, correct and delete your information. We don’t sell it or share it for advertising, so there’s nothing to opt out of.</li>
+</ul>
+<p>Using these rights never costs you anything or changes how we treat you.</p>
+
+<h2 id="security">Security</h2>
+<p>Passwords are hashed with argon2. Links in our emails work once and are stored only as hashes. Every connection uses HTTPS, and only the people who run <%= appName %> can reach the database. No system is perfectly secure: if a breach puts you at risk, we’ll tell you and the authorities as the law requires.</p>
+
+<h2 id="children">Children</h2>
+<p><%= appName %> is not meant for anyone under <%= legal.MIN_AGE %>, and we don’t knowingly collect information from them. If you think a child has given us information, write to us and we’ll delete it.</p>
+
+<h2 id="changes">Changes to this policy</h2>
+<p>When we change this policy, the date at the top changes too. If a change affects how your information is used, we’ll tell account holders by email or in the app before it applies.</p>
+
+<h2 id="contact">Contact</h2>
+<p><%= appName %><% if (op.address) { %>, <%= op.address %><% } %><br><%- mail(brand.privacyEmail) %></p>

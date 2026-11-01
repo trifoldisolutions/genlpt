@@ -37,6 +37,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.locals.appName = brand.appName;
 app.locals.brand = brand;
 app.locals.limits = limits;
+app.locals.legal = require('./config/legal');
 app.locals.planOffers = PLAN_OFFERS;
 
 app.use(securityHeaders());
@@ -45,7 +46,8 @@ app.use('/vendor/cytoscape', express.static(path.join(__dirname, 'node_modules/c
 // After static files, so only pages and API calls are logged; before the body parsers, so malformed bodies are too
 app.use(requestLog());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Webhooks are signed over their body as sent: those routes get it as req.rawBody, besides the parsed one
+app.use(express.json({ verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
 
 // Signed-in user: req.user for routes, res.locals.user ({ name, email, … } or null) for views
 app.use(sessions, loadUser);
@@ -55,6 +57,8 @@ const facades = [
   { name: 'Public', mount: '/', router: require('./routes/public') },
   { name: 'App', mount: '/app', router: require('./routes/app') },
   { name: 'Admin', mount: '/admin', router: require('./routes/admin') },
+  // Before the API, whose last route answers 404 to every /api path it doesn't know
+  { name: 'Webhooks', mount: '/api/webhooks', router: require('./routes/webhooks') },
   { name: 'API', mount: '/api', router: require('./routes/api') },
 ];
 

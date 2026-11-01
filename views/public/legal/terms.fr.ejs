@@ -1,0 +1,91 @@
+<%
+  const op = brand.operator;
+  const heures = (n) => `${n} heure${n > 1 ? 's' : ''}`;
+  const jours = (n) => `${n} jour${n > 1 ? 's' : ''}`;
+  const mail = (address) => `<a href="mailto:${address}">${address}</a>`;
+  // op.state.fr comes with its preposition, which changes with the state (de Floride, du Texas)
+  const loi = op.state ? `les lois de l’État ${op.state.fr}, aux États-Unis` : 'les lois des États-Unis et de l’État où nous sommes établis';
+%>
+<p class="lead">Ces conditions forment l’entente entre vous et <%= appName %> (« nous »). En utilisant <%= appName %>, en tant qu’invité ou avec un compte, vous les acceptez. Notre <a href="<%= legal.PATHS.privacy.fr %>">politique de confidentialité</a> explique ce que nous faisons de vos renseignements.</p>
+
+<h2 id="qui">Qui peut utiliser <%= appName %></h2>
+<p>Vous devez avoir au moins <%= legal.MIN_AGE %> ans. Si vous utilisez <%= appName %> pour une organisation, vous confirmez pouvoir accepter ces conditions en son nom.</p>
+
+<h2 id="compte">Votre compte</h2>
+<ul>
+  <li>Indiquez votre vrai nom et une adresse courriel où vous recevez du courrier. Un compte dont l’adresse n’est pas confirmée dans les <%= jours(limits.UNVERIFIED_DAYS) %> est supprimé.</li>
+  <li>Un compte est réservé à une seule personne. Gardez votre mot de passe pour vous : vous êtes responsable de ce qui est fait avec votre compte.</li>
+  <li>Si vous pensez que quelqu’un d’autre a accédé à votre compte, changez votre mot de passe et prévenez-nous.</li>
+</ul>
+
+<h2 id="invites">Utiliser <%= appName %> en tant qu’invité</h2>
+<p>Sans compte, vos sessions sont gardées dans ce navigateur seulement, et chacune est effacée <%= heures(limits.GUEST_HOURS) %> après sa dernière utilisation. Une fois effacée, elle ne peut pas être récupérée. Créez un compte gratuit pour les garder.</p>
+
+<h2 id="contenu">Votre contenu</h2>
+<p>Ce que vous écrivez dans <%= appName %> (vos réponses, vos mots et vos titres) reste à vous. Vous nous autorisez à le conserver, à le traiter et à l’envoyer à des fournisseurs d’IA pour faire fonctionner <%= appName %> pour vous, et à rien d’autre.</p>
+<p>N’écrivez que ce que vous avez le droit d’utiliser. Comme vos réponses sont envoyées à des modèles d’IA tiers, n’y mettez rien qui doive rester confidentiel.</p>
+
+<h2 id="resultats">Ce que produit l’IA</h2>
+<p>Les mots, les noms, les notes et les acronymes sont produits par l’IA. Ils peuvent être faux ou étranges, et correspondre à des noms que d’autres utilisent déjà ou obtiennent aussi de <%= appName %>. Nous ne revendiquons aucun droit sur eux : vous êtes libre de les utiliser.</p>
+<p>Nous ne garantissons pas qu’un nom est original ou libre d’utilisation. Vérifiez les marques de commerce, les noms d’entreprise et les noms de domaine avant d’en adopter un. La disponibilité des domaines vient des registres publics : elle peut changer à tout moment, et un nom indiqué comme libre peut tout de même être vendu à prix fort.</p>
+
+<h2 id="usage">Usage loyal</h2>
+<p>N’utilisez pas <%= appName %> pour :</p>
+<ul>
+  <li>enfreindre la loi ou les droits de quiconque, ou produire un contenu haineux, harcelant ou destiné à tromper;</li>
+  <li>contourner les limites d’utilisation, par exemple avec plusieurs comptes ou invités, des scripts ou des robots;</li>
+  <li>copier, extraire ou automatiser <%= appName %> au-delà d’un usage normal, ou offrir son IA comme votre propre service;</li>
+  <li>sonder, surcharger ou attaquer <%= appName %>, ou accéder à des comptes ou à des données qui ne sont pas les vôtres.</li>
+</ul>
+
+<h2 id="forfaits">Forfaits et limites</h2>
+<p>Les invités, les comptes gratuits et le forfait payant ont chacun des limites d’utilisation de l’IA, comptées par périodes de <%= heures(limits.USAGE_WINDOW_HOURS) %> et affichées dans Settings → Usage. Quand la demande est forte, l’IA peut être mise en pause pour les invités, puis pour les comptes gratuits, jusqu’à minuit UTC.</p>
+<p>Nous pouvons modifier ce que comprend chaque forfait. Une modification qui réduit un forfait payant que vous avez réglé s’applique à partir de votre prochain renouvellement, et nous vous en informerons d’abord.</p>
+
+<h2 id="payant">Le forfait payant</h2>
+<ul>
+  <li>Son prix est affiché dans Settings → Billing avant que vous vous abonniez, taxes ajoutées là où la loi l’exige.</li>
+  <li>Il se renouvelle automatiquement chaque mois jusqu’à ce que vous l’annuliez. Vous pouvez l’annuler à tout moment : vous gardez le forfait payant jusqu’à la fin de la période réglée, et vous n’êtes plus facturé.</li>
+  <li>Les paiements sont traités par notre prestataire de paiement, selon ses propres conditions.</li>
+  <li>Les périodes entamées ne sont pas remboursées, sauf si la loi en dispose autrement. Si vous avez été facturé par erreur ou deux fois, écrivez-nous et nous vous rembourserons.</li>
+  <li>Nous vous préviendrons au moins 30 jours avant un changement de prix, qui s’applique à partir de votre prochain renouvellement. Vous pouvez annuler d’ici là.</li>
+  <li>Si vous êtes un consommateur bénéficiant d’un droit légal d’annulation ou de remboursement, par exemple dans l’Union européenne, au Royaume-Uni ou au Québec, rien dans ces conditions ne vous l’enlève.</li>
+</ul>
+
+<h2 id="service">Disponibilité et changements</h2>
+<p>Nous faisons en sorte que <%= appName %> fonctionne, mais il peut être interrompu pour maintenance ou en cas de panne, et des fonctions peuvent changer ou disparaître. Gardez votre propre copie des noms qui comptent pour vous.</p>
+
+<h2 id="fin">Fin</h2>
+<p>Vous pouvez cesser d’utiliser <%= appName %> à tout moment, et supprimer votre compte dans Settings → Account. Nous pouvons suspendre ou fermer un compte, ou bloquer un invité, qui enfreint ces conditions, après vous avoir averti quand nous le pouvons raisonnablement. Si nous fermons <%= appName %> pour de bon, nous en informerons les titulaires de compte au moins 30 jours à l’avance et rembourserons toute période payée non encore utilisée.</p>
+
+<h2 id="nous">Ce qui nous appartient</h2>
+<p>Le logiciel, le design et le nom de <%= appName %> nous appartiennent ou nous sont concédés sous licence. Ces conditions vous permettent d’utiliser <%= appName %>, sans vous donner d’autre droit sur eux.</p>
+
+<h2 id="garantie">Absence de garantie</h2>
+<p><%= appName %> est fourni « tel quel » et « selon sa disponibilité ». Dans la mesure permise par la loi, nous ne promettons pas qu’il répondra à vos besoins, qu’il fonctionnera sans interruption ni erreur, ni que ses résultats seront exacts ou adaptés à un usage particulier.</p>
+
+<h2 id="responsabilite">Limites de notre responsabilité</h2>
+<p>Dans la mesure permise par la loi, nous ne sommes pas responsables des pertes indirectes ou consécutives, comme une perte de profits, de données ou de clientèle. Notre responsabilité totale pour toute réclamation concernant <%= appName %> est limitée au plus élevé de deux montants : ce que vous nous avez payé dans les 12 mois précédant la réclamation, ou 50 $ US.</p>
+<p>Rien dans ces conditions ne limite une responsabilité que la loi ne permet pas de limiter, comme en cas de fraude, de faute lourde ou de faute intentionnelle, ni les droits que vous avez en tant que consommateur.</p>
+
+<h2 id="loi">Loi applicable et litiges</h2>
+<p>Ces conditions sont régies par <%= loi %>. Si vous êtes un consommateur, vous gardez aussi la protection des lois impératives du lieu où vous vivez, et vous pouvez porter une réclamation devant ses tribunaux. En cas de problème, écrivez-nous d’abord : la plupart se règlent ainsi.</p>
+
+<h2 id="changements">Modifications de ces conditions</h2>
+<p>Nous pouvons mettre ces conditions à jour, et la date en haut indique la dernière modification. Pour une modification importante, nous en informerons les titulaires de compte au moins 30 jours avant qu’elle s’applique. Si vous continuez d’utiliser <%= appName %> après cette date, les nouvelles conditions s’appliquent. Si vous ne les acceptez pas, vous pouvez cesser d’utiliser <%= appName %> et supprimer votre compte.</p>
+
+<h2 id="langue">Langue</h2>
+<p>Ces conditions sont offertes en français et en <a href="<%= legal.PATHS.terms.en %>" hreflang="en">anglais</a>. Les deux versions ont la même valeur.</p>
+
+<h2 id="contact">Contact</h2>
+<p><%= appName %><% if (op.address) { %>, <%= op.address %><% } %><br><%- mail(brand.supportEmail) %></p>
+
+<h2 id="mentions">Mentions légales</h2>
+<dl>
+  <dt>Éditeur</dt>
+  <dd><%= appName %>, entreprise non constituée en société, établie aux États-Unis<% if (op.address) { %>, <%= op.address %><% } %>. Contact : <%- mail(brand.supportEmail) %>.</dd>
+  <dt>Directeur de la publication</dt>
+  <dd>Le propriétaire de <%= appName %>.</dd>
+  <dt>Hébergement</dt>
+  <dd>Railway Corp., San Francisco, Californie, États-Unis (<a href="https://railway.com" rel="noopener">railway.com</a>). Base de données : MongoDB, Inc., New York, New York, États-Unis (<a href="https://www.mongodb.com" rel="noopener">mongodb.com</a>).</dd>
+</dl>

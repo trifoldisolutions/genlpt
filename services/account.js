@@ -51,6 +51,7 @@ async function exportData(userId, now = new Date()) {
       role: user.role,
       createdAt: user.createdAt,
       emailVerifiedAt: user.emailVerifiedAt,
+      ...(user.termsAcceptedAt ? { termsAcceptedAt: user.termsAcceptedAt } : {}),
       ...(user.subscription ? { subscription: { status: user.subscription.status, startedAt: user.subscription.startedAt, currentPeriodEnd: user.subscription.currentPeriodEnd } } : {}),
     },
     sessions: sessions.map((session) => {

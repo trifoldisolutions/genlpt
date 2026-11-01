@@ -27,6 +27,11 @@
     </main>
     <!-- Someone who can't log in can't reach Settings → Help center: the address is here for them -->
     <p class="text-center text-sm text-zinc-500">Need help? Email <a href="mailto:<%= brand.supportEmail %>" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= brand.supportEmail %></a></p>
+    <p class="mt-2 flex justify-center gap-4 text-sm">
+      <% ['privacy', 'terms'].forEach((doc) => { %>
+      <a href="<%= legal.PATHS[doc].en %>" target="_blank" rel="noopener" class="text-zinc-500 hover:text-zinc-900 hover:underline"><%= legal.TITLES[doc].en %></a>
+      <% }) %>
+    </p>
   </div>
 
   <!-- Showcase: a miniature of the app's graph spelling example acronyms (decorative) -->

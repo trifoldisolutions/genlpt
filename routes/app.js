@@ -100,12 +100,13 @@ async function emailSignup(email, unconfirmed, next) {
 
 // Signup for an address: a new account, or a fresh start for one never confirmed (whoever made it can no
 // longer get in, and only the inbox owner can activate it). Null when the address has a confirmed account,
-// which is left untouched.
+// which is left untouched. The signup form says that creating an account accepts the terms.
 async function registerUnconfirmed({ name, email }, passwordHash) {
+  const now = Date.now();
   try {
     return await User.findOneAndUpdate(
       { email, emailVerifiedAt: null },
-      { $set: { name, passwordHash, deleteAfter: new Date(Date.now() + UNVERIFIED_DAYS * 24 * 60 * 60 * 1000) } },
+      { $set: { name, passwordHash, termsAcceptedAt: new Date(now), deleteAfter: new Date(now + UNVERIFIED_DAYS * 24 * 60 * 60 * 1000) } },
       { upsert: true, returnDocument: 'after', runValidators: true }
     );
   } catch (err) {

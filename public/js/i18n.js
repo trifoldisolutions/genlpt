@@ -173,6 +173,8 @@ const STRINGS = {
   helpFaq: 'Frequently asked questions',
   helpFaqHelp: 'Quick answers to the questions people ask most.',
   opensInNewTab: '(opens in a new tab)',
+  privacyPolicy: 'Privacy policy',
+  termsOfService: 'Terms of service',
   helpSearchLabel: 'Search help',
   helpSearchPh: 'Search help',
   helpSearchTopicPh: 'Search {topic}',

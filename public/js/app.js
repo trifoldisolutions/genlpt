@@ -3,6 +3,7 @@ import { BRANCHES, COLORS, t, errorText, applyStatic } from './i18n.js';
 import { createGraph, LAYOUTS } from './graph.js';
 import { customSelect } from './select.js';
 import { sessionTabs } from './tabs.js';
+import { toast } from './toast.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -68,26 +69,6 @@ const prefs = {
 
 const mqDesktop = window.matchMedia('(min-width: 64rem)');
 const isDesktop = () => mqDesktop.matches;
-
-function toast(message, kind = 'error', ms = kind === 'error' ? 7000 : 3500) {
-  const kinds = {
-    error: { accent: 'border-l-red-500', icon: 'alert-circle', color: 'text-red-600' },
-    ok: { accent: 'border-l-emerald-500', icon: 'check-circle', color: 'text-emerald-600' },
-    info: { accent: 'border-l-sky-500', icon: 'info-circle', color: 'text-sky-600' },
-  };
-  const k = kinds[kind];
-  const el = h('div', {
-    class: `pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border border-l-4 border-zinc-200 bg-surface px-3 py-2.5 text-base text-zinc-800 shadow-lg ${k.accent}`,
-    role: kind === 'error' ? 'alert' : 'status',
-  }, [icon(k.icon, 18, `mt-px ${k.color}`), h('span', { class: 'min-w-0 flex-1', text: message })]);
-  // Over an open dialog, the toasts go inside it: everything outside a modal is drawn under it, and inert.
-  // They're still fixed to the viewport there, and go back to <body> when it closes (bindStatic).
-  const box = $('#toasts');
-  const host = document.querySelector('dialog[open]') || document.body;
-  if (box.parentElement !== host) host.append(box);
-  box.append(el);
-  setTimeout(() => el.remove(), ms);
-}
 
 // ---------------------------------------------------------------------------
 // API
@@ -2602,7 +2583,7 @@ const HELP_ANSWERS = [
   { id: 'data', topic: 'account', show: forAccount, action: accountTab },
   { id: 'signup', topic: 'account', show: forGuest, action: signUpAction },
   { id: 'login', topic: 'account', show: forGuest, action: logInAction },
-  { id: 'ai', topic: 'account' },
+  { id: 'ai', topic: 'account', action: () => ({ label: t('privacyPolicy'), href: '/privacy' }) }, // config/legal.js PATHS
   { id: 'left', topic: 'usage', body: leftAnswer, action: () => [{ label: t('openUsage'), tab: 'usage' }, forGuest() && signUpAction()] },
   { id: 'paused', topic: 'usage', body: pausedAnswer },
   {

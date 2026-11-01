@@ -66,6 +66,8 @@
   </button>
   <% if (signup) { %>
   <p class="text-center text-sm text-zinc-500">We'll send you an email to confirm your address.</p>
+  <%# In a new tab, so what's typed in the form stays %>
+  <p class="text-center text-sm text-zinc-500">By creating an account, you agree to the <a href="<%= legal.PATHS.terms.en %>" target="_blank" rel="noopener" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline">terms of service</a> and confirm you’ve read the <a href="<%= legal.PATHS.privacy.en %>" target="_blank" rel="noopener" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline">privacy policy</a>.</p>
   <% } %>
 </form>
 

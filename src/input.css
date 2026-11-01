@@ -335,6 +335,21 @@
   .step[data-done="true"] .step-dot { @apply border-cerise-500 bg-cerise-50 text-cerise-600; }
   .step[aria-selected="true"] { @apply font-semibold text-zinc-900; }
   .step[aria-selected="true"] .step-dot { @apply border-brand bg-brand text-on-brand; }
+
+  /* The privacy policy and terms (views/public/legal.ejs): long text, read top to bottom. scroll-mt: a heading
+     reached by its #anchor isn't flush against the window's edge */
+  .legal { @apply text-base text-zinc-700; }
+  .legal .lead { @apply mt-4 text-lg text-zinc-600; }
+  .legal h2 { @apply mt-10 scroll-mt-6 text-xl font-semibold tracking-tight text-zinc-900; }
+  .legal h3 { @apply mt-6 scroll-mt-6 text-base font-semibold text-zinc-900; }
+  .legal p, .legal ul, .legal dl { @apply mt-3; }
+  .legal ul { @apply list-disc space-y-2 pl-5 marker:text-zinc-400; }
+  .legal dt { @apply mt-3 font-semibold text-zinc-900; }
+  .legal dd { @apply mt-0.5; }
+  .legal strong { @apply font-semibold text-zinc-900; }
+  .legal em { @apply text-zinc-500; }
+  .legal code { @apply rounded-sm bg-zinc-100 px-1 py-0.5 text-sm text-zinc-800; }
+  .legal :is(p, li, dd) a { @apply font-medium text-cerise-600 underline underline-offset-2 hover:text-cerise-700; }
 }
 
 /* ---- App shell state (unlayered so it wins over utilities) ---- */

@@ -735,6 +735,13 @@
 
             <p class="mt-4 text-sm text-zinc-500"><span data-i18n="helpPreferEmail"></span> <a href="mailto:<%= brand.supportEmail %>" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= brand.supportEmail %></a></p>
           </div>
+
+          <!-- The privacy policy and terms (config/legal.js), last: in a new tab, like the guides -->
+          <p class="flex flex-wrap gap-x-4 gap-y-1 border-t border-zinc-100 pt-4 text-sm">
+            <% [['privacy', 'privacyPolicy'], ['terms', 'termsOfService']].forEach(([doc, key]) => { %>
+            <a href="<%= legal.PATHS[doc].en %>" target="_blank" rel="noopener" class="text-zinc-500 hover:text-zinc-900 hover:underline"><span data-i18n="<%= key %>"></span> <span class="sr-only" data-i18n="opensInNewTab"></span></a>
+            <% }) %>
+          </p>
         </section>
       </div>
     </div>

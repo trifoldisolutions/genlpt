@@ -1,0 +1,137 @@
+<%
+  const op = brand.operator;
+  const heures = (n) => `${n} heure${n > 1 ? 's' : ''}`;
+  const jours = (n) => `${n} jour${n > 1 ? 's' : ''}`;
+  const mail = (address) => `<a href="mailto:${address}">${address}</a>`;
+%>
+<p class="lead">Cette politique explique ce que <%= appName %> recueille à votre sujet, pourquoi, qui d’autre y a accès, combien de temps nous le gardons, et comment le consulter, le modifier ou le supprimer. Nous l’avons écrite pour qu’elle soit lue, pas survolée.</p>
+
+<h2 id="qui">Qui nous sommes</h2>
+<p><%= appName %> (« nous ») est une entreprise établie aux États-Unis, pas encore constituée en société. Nous décidons de l’usage des renseignements décrits ici et nous en sommes responsables.</p>
+<p>La personne responsable de la protection des renseignements personnels est le propriétaire de <%= appName %>. Pour toute question ou demande au sujet de vos renseignements, écrivez à <%- mail(brand.privacyEmail) %>.</p>
+
+<h2 id="recueil">Ce que nous recueillons</h2>
+<h3>Chaque fois que vous utilisez <%= appName %></h3>
+<ul>
+  <li><strong>Vos sessions :</strong> vos réponses aux quatre questions, les mots de votre carte, vos acronymes et leurs notes, ainsi que le titre, la langue et le modèle d’IA de chaque session.</li>
+  <li><strong>Vos compteurs d’utilisation :</strong> le nombre d’actions d’IA faites pendant la période d’utilisation en cours, pour appliquer les limites de chaque forfait.</li>
+  <li><strong>Un journal d’IA :</strong> pour chaque action d’IA, son type, sa date, son résultat, sa durée et ce qu’elle nous a coûté. Il ne contient pas ce que vous avez écrit.</li>
+  <li><strong>Les journaux du serveur :</strong> votre adresse IP, les pages et requêtes que vous faites, leur date et heure, et les erreurs. Les liens qui contiennent un code ou une adresse courriel en sont d’abord retirés.</li>
+</ul>
+
+<h3>En tant qu’invité</h3>
+<ul>
+  <li>Un identifiant aléatoire, dans un témoin (cookie), qui relie vos sessions à ce navigateur. Nous n’en gardons qu’une forme brouillée (hachée).</li>
+  <li>Vos compteurs d’utilisation sont aussi tenus par adresse IP, pour qu’effacer vos témoins ne les remette pas à zéro. L’adresse est gardée hachée.</li>
+</ul>
+
+<h3>Avec un compte</h3>
+<ul>
+  <li>Votre nom et votre adresse courriel.</li>
+  <li>Votre mot de passe, gardé seulement sous forme de hachage argon2 : personne, nous compris, ne peut le relire.</li>
+  <li>La date de votre inscription, de la confirmation de votre adresse et de votre acceptation des conditions; votre forfait.</li>
+</ul>
+
+<h3>Avec le forfait payant</h3>
+<ul>
+  <li>L’état et les dates de votre abonnement, et la trace de chaque paiement : montant, devise, état, date et lien vers son reçu.</li>
+  <li>Les données de votre carte vont à notre prestataire de paiement, jamais à nous : nous ne voyons ni ne gardons votre numéro de carte. Nous nommerons ce prestataire ici avant l’ouverture du forfait payant.</li>
+</ul>
+
+<h3>Quand vous nous écrivez</h3>
+<ul>
+  <li><strong>Par le centre d’aide :</strong> votre message et son sujet, votre adresse courriel, votre forfait, la session ouverte au moment de l’envoi, le paiement concerné si vous en avez choisi un, et le nom et la version de votre navigateur.</li>
+  <li><strong>Par courriel :</strong> votre message et ses pièces jointes, votre nom et votre adresse tels que votre logiciel de courriel les envoie, et les autres adresses auxquelles il a été envoyé.</li>
+</ul>
+
+<h3>Pour empêcher les abus</h3>
+<ul>
+  <li>Les connexions, inscriptions, réinitialisations de mot de passe, courriels de compte et messages qui nous sont envoyés sont comptés par adresse IP et par adresse courriel saisie, toutes deux gardées hachées, pour freiner quiconque essaie trop souvent.</li>
+</ul>
+
+<p>Nous ne recueillons ni votre position, ni vos contacts, ni votre numéro de carte, et nous n’utilisons aucun outil d’analyse, de publicité ou de pistage.</p>
+
+<h2 id="usage">Ce que nous en faisons</h2>
+<p>Nous utilisons vos renseignements seulement aux fins ci-dessous. Si vous êtes dans l’Espace économique européen ou au Royaume-Uni, chacune est suivie de sa base légale.</p>
+<ul>
+  <li><strong>Fournir <%= appName %> :</strong> garder vos sessions et votre compte, produire des mots et des acronymes, vérifier les noms de domaine. <em>Base : notre contrat avec vous.</em></li>
+  <li><strong>Envoyer les courriels nécessaires :</strong> confirmer votre adresse, réinitialiser votre mot de passe, vous informer d’un changement d’adresse courriel. Nous n’envoyons aucun courriel promotionnel. <em>Base : notre contrat avec vous.</em></li>
+  <li><strong>Vous répondre</strong> quand vous nous écrivez. <em>Base : notre contrat avec vous, ou notre intérêt légitime à aider les personnes qui nous contactent.</em></li>
+  <li><strong>Garder <%= appName %> sûr et équitable :</strong> vérifications anti-robots, limites de fréquence et d’utilisation, détection et correction des erreurs. <em>Base : notre intérêt légitime à protéger le service et ses utilisateurs.</em></li>
+  <li><strong>Gérer l’entreprise :</strong> le journal d’IA nous dit ce que coûte chaque forfait, pour fixer des prix justes et contenir les dépenses. <em>Base : notre intérêt légitime à offrir un service durable.</em></li>
+  <li><strong>Respecter nos obligations légales,</strong> comme garder les traces de paiement ou répondre à la demande légitime d’une autorité. <em>Base : obligation légale.</em></li>
+</ul>
+<p>L’IA note des acronymes, pas des personnes : <%= appName %> ne prend à votre sujet aucune décision automatisée ayant des effets juridiques ou d’importance similaire.</p>
+
+<h2 id="ia">Vos réponses et l’IA</h2>
+<p>Pour suggérer des mots, nommer et noter des acronymes, proposer un titre et reformuler des réponses, nous envoyons les réponses et les mots de votre session à des modèles d’IA par l’intermédiaire d’OpenRouter (OpenRouter, Inc., États-Unis). Nous n’envoyons rien qui identifie votre compte : ni votre nom, ni votre adresse courriel.</p>
+<p>OpenRouter transmet chaque requête à l’entreprise qui exploite le modèle, comme OpenAI. Sur notre compte, la journalisation d’OpenRouter est désactivée, tout comme l’option qui lui permettrait de se servir des requêtes pour améliorer son service : il ne garde donc pas le texte que vous envoyez. Deux exceptions : il examine chaque requête pour y détecter du matériel d’abus sexuel d’enfants et garde ce qu’il signale, et il classe par sujet un petit échantillon de requêtes, de façon anonyme.</p>
+<p>Notre compte n’autorise aussi OpenRouter qu’à utiliser des fournisseurs qui n’entraînent pas de modèles d’IA sur les requêtes et ne les publient pas. Nous non plus : vos réponses ne servent à entraîner aucun modèle d’IA. Certains fournisseurs gardent le texte pendant un temps limité, par exemple pour détecter les abus. <a href="https://openrouter.ai/models" rel="noopener">Les pages des modèles d’OpenRouter</a> indiquent la politique de chaque fournisseur.</p>
+<p>N’écrivez tout de même dans vos réponses rien qui doive rester confidentiel, comme des secrets d’affaires ou des renseignements personnels sur d’autres personnes.</p>
+
+<h2 id="partage">Qui d’autre y a accès</h2>
+<p>Nous ne vendons pas vos renseignements personnels et nous ne les communiquons pas à des fins publicitaires. Ces prestataires les traitent pour nous, chacun seulement pour ce qu’il fait :</p>
+<ul>
+  <li><strong>Railway</strong> (Railway Corp., États-Unis) exploite nos serveurs et garde les journaux du serveur.</li>
+  <li><strong>MongoDB Atlas</strong> (MongoDB, Inc., États-Unis) héberge notre base de données : tout ce qui est décrit plus haut, sauf les journaux du serveur.</li>
+  <li><strong>OpenRouter</strong> et les fournisseurs de modèles qu’il utilise reçoivent les réponses et les mots de vos sessions, comme décrit plus haut.</li>
+  <li><strong>Resend</strong> (Resend, Inc., États-Unis) envoie nos courriels et reçoit ceux adressés à nos adresses : il traite votre adresse courriel et ces courriels.</li>
+  <li><strong>Cloudflare</strong> (Cloudflare, Inc., États-Unis) vérifie qu’une personne, et non un robot, s’inscrit ou envoie le message d’un invité. Il voit votre adresse IP et des détails sur votre navigateur.</li>
+  <li><strong>Google Fonts</strong> (Google LLC, États-Unis) fournit notre police, et <strong>jsDelivr</strong> et <strong>Iconify</strong> nos icônes. Votre navigateur les charge directement, ils voient donc votre adresse IP et votre navigateur.</li>
+  <li><strong>Notre prestataire de paiement</strong>, dès l’ouverture du forfait payant, traite les paiements et les données de votre carte.</li>
+</ul>
+<p>Pour vérifier si les noms de domaine d’un acronyme sont libres, notre serveur interroge chaque registre sur le nom seul (comme sera.com), sans rien sur vous.</p>
+<p>Nous pouvons aussi communiquer des renseignements quand la loi l’exige, pour protéger la sécurité d’une personne ou nos droits, ou à un acheteur si l’entreprise est vendue, auquel cas cette politique continue de s’y appliquer.</p>
+
+<h2 id="lieu">Où ils sont traités</h2>
+<p>Nous et les prestataires ci-dessus sommes aux États-Unis : vos renseignements y sont donc conservés et traités, sous des lois sur la vie privée qui peuvent différer des vôtres. Pour les renseignements venant de l’Espace économique européen, du Royaume-Uni, de la Suisse ou du Québec, nous nous appuyons sur les garanties qu’offrent nos prestataires, comme les clauses contractuelles types ou la certification au Cadre de protection des données UE–États-Unis.</p>
+
+<h2 id="duree">Combien de temps nous les gardons</h2>
+<ul>
+  <li><strong>Sessions d’invité :</strong> effacées <%= heures(limits.GUEST_HOURS) %> après leur dernière utilisation. Elles ne peuvent pas être récupérées.</li>
+  <li><strong>Votre compte et ses sessions :</strong> jusqu’à ce que vous les supprimiez. Un compte dont l’adresse courriel n’est jamais confirmée est supprimé après <%= jours(limits.UNVERIFIED_DAYS) %>.</li>
+  <li><strong>Connexions :</strong> prennent fin <%= jours(limits.LOGIN_DAYS) %> après votre dernière visite.</li>
+  <li><strong>Liens de nos courriels :</strong> cessent de fonctionner après <%= heures(limits.VERIFY_LINK_HOURS) %> (confirmation) ou <%= heures(limits.RESET_LINK_HOURS) %> (réinitialisation du mot de passe), ou dès leur utilisation.</li>
+  <li><strong>Compteurs d’utilisation :</strong> supprimés à la fin de la période d’utilisation, <%= heures(limits.USAGE_WINDOW_HOURS) %> après son début.</li>
+  <li><strong>Compteurs anti-abus :</strong> supprimés à la fin de leur fenêtre de temps, en <%= heures(rateLimitHours) %> au plus.</li>
+  <li><strong>Journal d’IA :</strong> <%= jours(aiLogDays) %>. Quand vous supprimez votre compte, ses entrées en sont détachées et gardées seulement comme coûts anonymes.</li>
+  <li><strong>Messages qui nous sont envoyés :</strong> les courriels adressés à nos adresses, nos réponses et la copie de chaque message du centre d’aide envoyée à notre adresse de soutien sont gardés le temps nécessaire pour y répondre et en assurer le suivi. L’enregistrement du message dans le centre d’aide est supprimé avec votre compte. Les pièces jointes restent chez Resend, qui les supprime après 30 jours.</li>
+  <li><strong>Traces de paiement :</strong> supprimées avec votre compte. Le prestataire de paiement garde les siennes, comme la loi l’exige.</li>
+  <li><strong>Journaux du serveur :</strong> supprimés par Railway après <%= jours(legal.SERVER_LOG_DAYS) %> au plus.</li>
+</ul>
+
+<h2 id="temoins">Témoins et stockage du navigateur</h2>
+<ul>
+  <li><code>sid</code> vous garde connecté. Il est créé quand vous vous connectez et dure <%= jours(limits.LOGIN_DAYS) %> après votre dernière visite.</li>
+  <li><code>guest_id</code> relie les sessions d’un invité à ce navigateur. Il est créé quand un invité commence sa première session et dure <%= heures(limits.GUEST_HOURS) %> après sa dernière utilisation.</li>
+  <li>Le stockage local de votre navigateur garde vos réglages sur cet appareil, comme le thème, le style du graphe et la langue des nouvelles sessions. Il ne nous est pas envoyé.</li>
+</ul>
+<p>Tous sont nécessaires au fonctionnement de <%= appName %> ou pour retenir vos choix : c’est pourquoi il n’y a pas de bandeau de témoins. La vérification anti-robots de Cloudflare peut garder ce dont elle a besoin pour distinguer les personnes des robots. Comme nous ne vous suivons pas d’un site à l’autre, nous traitons chaque visiteur de la même façon, que son navigateur envoie ou non un signal Do Not Track ou Global Privacy Control.</p>
+
+<h2 id="droits">Vos droits</h2>
+<p>Où que vous soyez, vous pouvez :</p>
+<ul>
+  <li><strong>Obtenir une copie de vos données :</strong> dans Settings → Account, le bouton Download my data enregistre tout ce que nous gardons sur votre compte dans un fichier JSON.</li>
+  <li><strong>Les corriger :</strong> changez votre nom, votre adresse courriel et votre mot de passe dans Settings → Account, et modifiez ou supprimez vos sessions dans l’application.</li>
+  <li><strong>Les supprimer :</strong> dans Settings → Account, le bouton Delete account efface votre compte et toutes ses sessions, aussitôt et pour de bon.</li>
+  <li><strong>Nous demander toute autre chose,</strong> comme cesser un usage de vos renseignements ou obtenir les données d’un invité, à <%- mail(brand.privacyEmail) %>. Nous répondons dans les 30 jours, et devrons peut-être d’abord vérifier que les renseignements sont bien les vôtres.</li>
+</ul>
+<p>Selon l’endroit où vous vivez, la loi vous en donne davantage :</p>
+<ul>
+  <li><strong>Espace économique européen, Royaume-Uni, Suisse :</strong> les droits d’accès, de rectification et d’effacement, de limitation et d’opposition, de portabilité, et le droit de porter plainte auprès de votre autorité de protection des données (en France, la CNIL).</li>
+  <li><strong>Québec :</strong> les droits d’accès et de rectification, de désindexation, de portabilité, et le droit de porter plainte auprès de la Commission d’accès à l’information du Québec.</li>
+  <li><strong>Californie et autres États américains dotés de lois sur la vie privée :</strong> les droits de savoir, de corriger et de supprimer. Nous ne vendons pas vos renseignements et ne les communiquons pas à des fins publicitaires : il n’y a donc rien à refuser.</li>
+</ul>
+<p>Exercer ces droits ne vous coûte jamais rien et ne change pas la façon dont nous vous traitons.</p>
+
+<h2 id="securite">Sécurité</h2>
+<p>Les mots de passe sont hachés avec argon2. Les liens de nos courriels ne servent qu’une fois et ne sont gardés que sous forme de hachage. Chaque connexion passe par HTTPS, et seules les personnes qui exploitent <%= appName %> peuvent accéder à la base de données. Aucun système n’est parfaitement sûr : si un incident de confidentialité vous expose à un risque, nous vous en informerons, ainsi que les autorités, comme la loi l’exige.</p>
+
+<h2 id="enfants">Enfants</h2>
+<p><%= appName %> ne s’adresse pas aux moins de <%= legal.MIN_AGE %> ans, et nous ne recueillons pas sciemment de renseignements à leur sujet. Si vous pensez qu’un enfant nous a fourni des renseignements, écrivez-nous et nous les supprimerons.</p>
+
+<h2 id="changements">Modifications de cette politique</h2>
+<p>Quand nous modifions cette politique, la date en haut change aussi. Si une modification touche l’usage de vos renseignements, nous en informerons les titulaires de compte par courriel ou dans l’application avant qu’elle s’applique.</p>
+
+<h2 id="contact">Contact</h2>
+<p><%= appName %><% if (op.address) { %>, <%= op.address %><% } %><br><%- mail(brand.privacyEmail) %></p>

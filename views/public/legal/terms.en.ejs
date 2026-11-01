@@ -1,0 +1,90 @@
+<%
+  const op = brand.operator;
+  const hours = (n) => `${n} hour${n === 1 ? '' : 's'}`;
+  const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
+  const mail = (address) => `<a href="mailto:${address}">${address}</a>`;
+  const governingLaw = op.state ? `the laws of the State of ${op.state.en}, United States` : 'the laws of the United States and of the state where we are based';
+%>
+<p class="lead">These terms are the agreement between you and <%= appName %> (“we”, “us”). By using <%= appName %>, as a guest or with an account, you accept them. Our <a href="<%= legal.PATHS.privacy.en %>">privacy policy</a> explains what we do with your information.</p>
+
+<h2 id="who">Who can use <%= appName %></h2>
+<p>You must be at least <%= legal.MIN_AGE %> years old. If you use <%= appName %> for an organization, you confirm that you may accept these terms on its behalf.</p>
+
+<h2 id="account">Your account</h2>
+<ul>
+  <li>Give your real name and an email address you can receive mail at. An account whose address isn’t confirmed within <%= days(limits.UNVERIFIED_DAYS) %> is deleted.</li>
+  <li>An account is for one person. Keep your password to yourself: you’re responsible for what’s done with your account.</li>
+  <li>If you think someone else got into your account, change your password and tell us.</li>
+</ul>
+
+<h2 id="guests">Using <%= appName %> as a guest</h2>
+<p>Without an account, your sessions are kept in this browser only, and each one is erased <%= hours(limits.GUEST_HOURS) %> after it was last used. Once erased, it can’t be brought back. Create a free account to keep them.</p>
+
+<h2 id="content">Your content</h2>
+<p>What you type into <%= appName %> (your answers, words and titles) stays yours. You allow us to store it, process it and send it to AI providers to run <%= appName %> for you, and for nothing else.</p>
+<p>Only type what you have the right to use. Since your answers are sent to third-party AI models, don’t include anything that must stay confidential.</p>
+
+<h2 id="results">What the AI makes</h2>
+<p>Words, names, scores and acronyms are made by AI. They can be wrong or odd, and they can match names others already use or get from <%= appName %> too. We claim no rights to them: you’re free to use them.</p>
+<p>We don’t guarantee that a name is original or free to use. Check trademarks, business names and domain names before adopting one. Domain availability comes from the registries’ public records: it can change at any moment, and a name shown as free may still be sold at a premium price.</p>
+
+<h2 id="use">Fair use</h2>
+<p>Don’t use <%= appName %> to:</p>
+<ul>
+  <li>break the law or anyone’s rights, or make content that is hateful, harassing or meant to deceive;</li>
+  <li>get around usage limits, for example with several accounts or guests, scripts or bots;</li>
+  <li>copy, scrape or automate <%= appName %> beyond normal use, or offer its AI as your own service;</li>
+  <li>probe, overload or attack <%= appName %>, or get into accounts or data that aren’t yours.</li>
+</ul>
+
+<h2 id="plans">Plans and limits</h2>
+<p>Guests, free accounts and the paid plan each have AI usage limits, counted over usage periods of <%= hours(limits.USAGE_WINDOW_HOURS) %> and shown in Settings → Usage. When demand is high, AI can pause for guests, then for free accounts, until midnight UTC.</p>
+<p>We may change what each plan includes. A change that reduces a paid plan you’ve paid for applies from your next renewal, and we’ll tell you first.</p>
+
+<h2 id="paid">The paid plan</h2>
+<ul>
+  <li>Its price is shown in Settings → Billing before you subscribe, with any taxes added where the law requires them.</li>
+  <li>It renews automatically every month until you cancel. You can cancel at any time: you keep the paid plan until the end of the period you paid for, and you aren’t charged again.</li>
+  <li>Payments are handled by our payment provider, under its own terms.</li>
+  <li>Partial periods aren’t refunded, except where the law says otherwise. If you were charged by mistake or twice, write to us and we’ll refund it.</li>
+  <li>We’ll tell you at least 30 days before a price change, which applies from your next renewal. You can cancel before then.</li>
+  <li>If you’re a consumer with a legal right to cancel or be refunded, for example in the European Union, the United Kingdom or Québec, nothing in these terms takes it away.</li>
+</ul>
+
+<h2 id="service">Availability and changes</h2>
+<p>We work to keep <%= appName %> running, but it can be interrupted for maintenance or outages, and features can change or be removed. Keep your own copy of the names you care about.</p>
+
+<h2 id="ending">Ending</h2>
+<p>You can stop using <%= appName %> at any time, and delete your account in Settings → Account. We may suspend or close an account, or block a guest, that breaks these terms, after warning you when we reasonably can. If we close <%= appName %> altogether, we’ll tell account holders at least 30 days ahead and refund any paid period not yet used.</p>
+
+<h2 id="ours">What’s ours</h2>
+<p><%= appName %>’s software, design and name belong to us or to those who license them to us. These terms let you use <%= appName %>, and give you no other right to them.</p>
+
+<h2 id="warranty">No warranty</h2>
+<p><%= appName %> is provided “as is” and “as available”. To the extent the law allows, we make no promise that it will meet your needs, work without interruption or errors, or that its results will be accurate or fit for a particular purpose.</p>
+
+<h2 id="liability">Limits on our liability</h2>
+<p>To the extent the law allows, we’re not liable for indirect or consequential losses, such as lost profits, data or goodwill. Our total liability for any claim about <%= appName %> is limited to the greater of what you paid us in the 12 months before the claim, and US$50.</p>
+<p>Nothing in these terms limits liability that the law doesn’t allow to be limited, such as for fraud, gross negligence or intentional fault, or the rights you have as a consumer.</p>
+
+<h2 id="law">Law and disputes</h2>
+<p>These terms are governed by <%= governingLaw %>. If you’re a consumer, you also keep the protection of the mandatory laws of the place where you live, and you can bring a claim before its courts. If something goes wrong, please write to us first: most problems can be settled that way.</p>
+
+<h2 id="changes">Changes to these terms</h2>
+<p>We may update these terms, and the date at the top shows the latest change. For a change that matters, we’ll tell account holders at least 30 days before it applies. If you keep using <%= appName %> after that, the new terms apply. If you don’t agree with them, you can stop using <%= appName %> and delete your account.</p>
+
+<h2 id="language">Language</h2>
+<p>These terms are available in English and in <a href="<%= legal.PATHS.terms.fr %>" hreflang="fr">French</a>. Both versions have the same value.</p>
+
+<h2 id="contact">Contact</h2>
+<p><%= appName %><% if (op.address) { %>, <%= op.address %><% } %><br><%- mail(brand.supportEmail) %></p>
+
+<h2 id="notice">Legal notice</h2>
+<dl>
+  <dt>Publisher</dt>
+  <dd><%= appName %>, an unincorporated business based in the United States<% if (op.address) { %>, <%= op.address %><% } %>. Contact: <%- mail(brand.supportEmail) %>.</dd>
+  <dt>Director of publication</dt>
+  <dd>The owner of <%= appName %>.</dd>
+  <dt>Hosting</dt>
+  <dd>Railway Corp., San Francisco, California, United States (<a href="https://railway.com" rel="noopener">railway.com</a>). Database: MongoDB, Inc., New York, New York, United States (<a href="https://www.mongodb.com" rel="noopener">mongodb.com</a>).</dd>
+</dl>
