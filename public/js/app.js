@@ -1877,10 +1877,10 @@ function toggleOptions(open = $('#options-menu').hidden) {
 
 // ---------------------------------------------------------------------------
 // Settings: the account badge (sidebar, bottom) opens the settings dialog on General; its tabs are General, Usage,
-// Billing, Account and Help center. Feedback is a toast (shown over the dialog); only the Account tab's forms say
-// what's wrong under their fields.
+// Billing, Account, Help center and Contact us. Feedback is a toast (shown over the dialog); only the Account tab's
+// forms and Contact us's say what's wrong under their fields.
 
-const SETTINGS_TABS = ['general', 'usage', 'billing', 'account', 'help'];
+const SETTINGS_TABS = ['general', 'usage', 'billing', 'account', 'help', 'contact'];
 const GUEST_HOURS = Number(document.body.dataset.guestHours) || 3;
 const USAGE_HOURS = Number(document.body.dataset.usageHours) || 5;
 // Each plan's price and the limits people see (services/usage.js PLAN_OFFERS), and the plan Billing compares each with
@@ -1942,8 +1942,12 @@ function setSettingsTab(tab) {
   if (tab === 'help') {
     renderHelp();
     refreshUsage();
-    refreshTransactions();
     recheckHealth().then(renderHelp);
+  }
+  if (tab === 'contact') {
+    renderContact();
+    refreshTransactions();
+    drawBotCheck();
   }
   if (tab === 'general') {
     $('#pref-language').value = prefs.get(PREF_LANGUAGE) || '';
@@ -2192,7 +2196,7 @@ function renderSettingsBilling() {
   );
 }
 
-// Fetched each time Billing or Help center opens (a payment may have come in since); the last ones fetched show
+// Fetched each time Billing or Contact us opens (a payment may have come in since); the last ones fetched show
 // meanwhile
 async function refreshTransactions() {
   if (!profile || !state.health.db) return;
@@ -2462,8 +2466,8 @@ async function deleteAccount(e) {
 // Settings → Help center: answers first, like a help site. One search finds answers across every topic, or within
 // the topic open; with nothing typed, popular answers and the topics show. An answer opens in place, with the button
 // that fixes it when there is one, and some are written from the account's own state (its plan's dates, what's left
-// of its AI usage). A message to support (POST /api/support) is for whatever's left. Answers that need the payment
-// provider (a new card, resuming a canceled plan) come with it.
+// of its AI usage). Contact us, the next tab, is for whatever's left. Answers that need the payment provider (a new
+// card, resuming a canceled plan) come with it.
 
 const SUPPORT_MIN = Number($('#help-message').dataset.min) || 20; // SUPPORT_MESSAGE_MIN_CHARS (config/limits.js)
 const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=helpBotCheckReady';
@@ -2559,7 +2563,7 @@ const forGuest = () => !profile;
 // The answers, in each topic's order: id (helpQ, helpA and helpK.<id> in i18n.js), topic, show (when it applies),
 // body (its text, when it depends on the account) and action: its button, or several, or none. An action is
 // { label, tab } another settings tab; { label, href, keep } a page, in a new tab unless keep (signup, login: back to
-// this session after); { label, run } done here; { label, contact } the message form, about that topic.
+// this session after); { label, run } done here; { label, contact } Contact us's form, about that topic.
 const HELP_ANSWERS = [
   { id: 'refund', topic: 'billing', action: () => ({ label: t('contactUs'), contact: 'billing' }) },
   { id: 'receipts', topic: 'billing', show: forAccount, action: () => ({ label: t('viewPayments'), tab: 'billing' }) },
@@ -2654,7 +2658,7 @@ function answerAction(a) {
   }
   let run = a.run;
   if (a.tab) run = () => goToTab(a.tab);
-  if (a.contact) run = () => openHelpForm(true, { about: a.contact });
+  if (a.contact) run = () => goToContact(a.contact);
   return h('button', { type: 'button', class: ANSWER_BUTTON, text: a.label, onclick: run });
 }
 
@@ -2738,8 +2742,8 @@ function helpStatus() {
   return null;
 }
 
-// Everything but the search box and the form's fields, which keep what's typed in them. Whatever had the focus in
-// the answers keeps it once they're drawn again (fresh usage or payments come in while the tab is open).
+// Everything but the search box, which keeps what's typed in it. Whatever had the focus in the answers keeps it once
+// they're drawn again (fresh usage comes in while the tab is open).
 function renderHelp() {
   const q = helpQuery.trim();
   const status = helpStatus();
@@ -2761,8 +2765,6 @@ function renderHelp() {
   const focused = document.activeElement?.dataset?.helpFocus;
   $('#help-body').replaceChildren(...helpView());
   if (focused) $(`#help-body [data-help-focus="${focused}"]`)?.focus();
-  $('#help-message-help').textContent = profile ? `${t('helpReplyTo', { email: profile.email })} ${t('helpContextNote')}` : t('helpContextNote');
-  renderHelpPayments();
 }
 
 function onHelpSearch(e) {
@@ -2804,6 +2806,22 @@ function leaveTopic({ keepQuery = false } = {}) {
   $('#help-search').focus();
 }
 
+// ---------------------------------------------------------------------------
+// Settings → Contact us: the message form (POST /api/support), and the addresses written in the page. The fields keep
+// what's typed in them from one tab to the next.
+
+// Everything in the form that depends on the account
+function renderContact() {
+  $('#help-message-help').textContent = profile ? `${t('helpReplyTo', { email: profile.email })} ${t('helpContextNote')}` : t('helpContextNote');
+  renderHelpPayments();
+}
+
+// From an answer, or the end of Help center: this tab, ready to write in. about: the topic it's on; else as it was.
+function goToContact(about = null) {
+  setSettingsTab('contact');
+  showHelpForm(about);
+}
+
 // The payment a billing message is about: for an account with payments. The one picked stays picked as the list
 // comes in again.
 function renderHelpPayments() {
@@ -2837,28 +2855,21 @@ function setHelpError(text, fieldId = null) {
   field.focus();
 }
 
-// The form in place of its button (open: false, the other way round, emptied). about: the topic it opens on; else
-// the topic open, or Something else.
-function openHelpForm(open, { about = null } = {}) {
-  show($('#help-contact-start'), !open);
-  show($('#help-form'), open);
+// The form, in place of the word that a message was sent, with the cursor in the first field left to fill. about:
+// the topic to put it on; else it stays on the one it's on.
+function showHelpForm(about = null) {
+  show($('#help-form'), true);
   show($('#help-sent'), false);
-  setHelpError(null);
-  if (!open) {
-    $('#help-form').reset();
+  if (about) {
+    $('#help-about').value = about;
     aboutPicker?.sync();
     renderHelpPayments();
-    return;
   }
-  $('#help-about').value = about || helpTopic || 'other';
-  aboutPicker?.sync();
-  renderHelpPayments();
-  drawBotCheck();
   const email = $('#help-email');
   (email && !email.value ? email : $('#help-message')).focus();
 }
 
-// A guest's bot check is drawn the first time the form opens: its script loads then, not with the app
+// A guest's bot check is drawn the first time Contact us opens: its script loads then, not with the app
 function drawBotCheck() {
   const box = $('#help-turnstile');
   if (!box || helpWidget) return;
@@ -2914,8 +2925,11 @@ async function sendHelp(e) {
   renderHelpButtons();
   if (turnstileToken) window.turnstile.reset(helpWidget); // a token works once
   if (error) return setHelpError(errorText(error), HELP_FIELD[error.code]);
-  openHelpForm(false);
-  show($('#help-contact-start'), false);
+  setHelpError(null);
+  $('#help-form').reset();
+  aboutPicker?.sync();
+  renderHelpPayments();
+  show($('#help-form'), false);
   $('#help-sent-text').textContent = t('helpSentText', sent);
   show($('#help-sent'), true);
   $('#help-new').focus();
@@ -2936,9 +2950,8 @@ function bindHelp() {
   aboutPicker = customSelect($('#help-about'));
   paymentPicker = customSelect($('#help-payment'));
   $('#help-about').addEventListener('change', renderHelpPayments);
-  $('#help-contact-open').addEventListener('click', () => openHelpForm(true));
-  $('#help-cancel').addEventListener('click', () => { openHelpForm(false); $('#help-contact-open').focus(); });
-  $('#help-new').addEventListener('click', () => openHelpForm(true));
+  $('#help-contact-open').addEventListener('click', () => goToContact(helpTopic));
+  $('#help-new').addEventListener('click', () => showHelpForm());
   $('#help-form').addEventListener('submit', sendHelp);
   $('#help-form').addEventListener('input', () => setHelpError(null));
   renderHelpButtons();

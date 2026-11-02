@@ -164,7 +164,7 @@ const SUPPORT_TOPICS = { billing: 'Billing', account: 'Account', usage: 'AI and 
 const PLAN_NAMES = { guest: 'Guest', free: 'Free account', paid: 'Paid plan' };
 const day = (date) => (date ? new Date(date).toISOString().slice(0, 10) : '?');
 
-// Not an account email: a message from Settings → Help center, to the support inbox (services/support.js), sent
+// Not an account email: a message from Settings → Contact us, to the support inbox (services/support.js), sent
 // with Reply-To the sender. It holds what they typed, which is fine here: it only ever goes to our own inbox.
 // r: the SupportRequest, as saved
 function supportRequest(r) {

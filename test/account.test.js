@@ -161,7 +161,7 @@ test('the transaction history is the account’s latest payments, newest first, 
   assert.deepEqual(await account.transactions(userId), { transactions: [payment(27), payment(20, 'failed')], more: false });
   assert.deepEqual(seen.filter, { userId });
   assert.deepEqual(seen.sort, { date: -1 });
-  assert.equal(seen.projection._id, 1, 'Help center’s form names a payment by its id');
+  assert.equal(seen.projection._id, 1, 'Contact us’s form names a payment by its id');
   for (const key of ['provider', 'providerId', 'userId']) assert.equal(seen.projection[key], undefined, key);
 });
 

@@ -3,7 +3,7 @@
 
 module.exports = {
   // The date both documents show, in each language: change it with any change to what they say
-  UPDATED: '2026-11-01',
+  UPDATED: '2026-11-02',
   // Who may use GenLPT (the terms): GDPR's default age of consent, above Québec's 14, so no parent's consent is needed
   MIN_AGE: 16,
   // How long Railway keeps the server logs (IP addresses). Its docs say 30 days on Pro; its staff say logs are

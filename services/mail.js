@@ -205,7 +205,7 @@ function receivedFields(email) {
   };
 }
 
-// Who a received email is from, for answering: its Reply-To when it has one (Help center's messages come from our own
+// Who a received email is from, for answering: its Reply-To when it has one (Contact us's messages come from our own
 // no-reply address, with the sender as Reply-To), else its sender
 const counterpartOf = (fields) => (fields.replyTo[0] ? { name: '', address: fields.replyTo[0] } : fields.from);
 
@@ -700,7 +700,7 @@ async function threadsWith(words) {
 }
 
 // The threads holding an email written by this person (part of a name or an address, or of the Reply-To of a message sent
-// for them: Help center's), sent to this one (part of an address, the only thing kept of whom it went to, in To or Cc),
+// for them: Contact us's), sent to this one (part of an address, the only thing kept of whom it went to, in To or Cc),
 // between these days. One email has to be all of those.
 function threadsMatching({ author, recipient, since, until }) {
   const match = {};

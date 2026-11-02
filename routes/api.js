@@ -579,7 +579,7 @@ router.delete('/account', sameOrigin, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Support: Settings → Help center's contact form (services/support.js). An account's reply goes to its own address;
+// Support: Settings → Contact us's form (services/support.js). An account's reply goes to its own address;
 // a guest types one and passes the bot check, as on signup. Limited per connection and per account. The request is
 // saved before the answer, which gives its reference; its email to the inbox goes out after.
 
@@ -1241,7 +1241,7 @@ router.routes = [
   { method: 'GET', path: '/account/transactions', label: 'My payments, newest first (transaction history)' },
   { method: 'GET', path: '/account/export', label: 'Download my data (JSON file)' },
   { method: 'DELETE', path: '/account', label: 'Delete my account and its sessions (password)' },
-  { method: 'POST', path: '/support', label: 'Help center message to the support inbox (guests: bot check)' },
+  { method: 'POST', path: '/support', label: 'Contact us message to the support inbox (guests: bot check)' },
   { method: 'POST', path: '/sessions/:id/expand', label: 'LLM words for branches' },
   { method: 'POST', path: '/sessions/:id/words', label: 'Add manual word' },
   { method: 'PATCH', path: '/sessions/:id/words/:wordId', label: 'Rename / (de)select word' },

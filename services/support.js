@@ -9,7 +9,7 @@ const { normalizeEmail, emailProblem } = require('../middleware/auth');
 const { SUPPORT_MESSAGE_MIN_CHARS, SUPPORT_MESSAGE_MAX_CHARS } = require('../config/limits');
 const { adminEmails } = require('../middleware/admin');
 
-// Settings → Help center's contact form (POST /api/support). Each message is saved first (models/SupportRequest.js),
+// Settings → Contact us's form (POST /api/support). Each message is saved first (models/SupportRequest.js),
 // then emailed to SUPPORT_INBOX with the sender as Reply-To, so the team answers from their own mail client.
 
 const { TOPICS } = SupportRequest;

@@ -1,4 +1,4 @@
-// Bot check on signup and on a guest's Help center message: Cloudflare Turnstile. The page shows Cloudflare's widget
+// Bot check on signup and on a guest's Contact us message: Cloudflare Turnstile. The page shows Cloudflare's widget
 // (most visitors never see it), which gives it a token; before making an account or saving the message the server
 // asks Cloudflare whether that token is genuine (https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
 // Without TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY there's no check (local dev, tests): rate limits only.

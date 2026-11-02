@@ -40,7 +40,7 @@
 
 <h3>When you write to us</h3>
 <ul>
-  <li><strong>From the Help center:</strong> your message and its topic, your email address, your plan, the session open when you sent it, the payment it’s about if you chose one, and your browser’s name and version.</li>
+  <li><strong>From the contact form:</strong> your message and its topic, your email address, your plan, the session open when you sent it, the payment it’s about if you chose one, and your browser’s name and version.</li>
   <li><strong>By email:</strong> your message and its attachments, your name and address as your mail app sends them, and the other addresses it went to.</li>
 </ul>
 
@@ -96,7 +96,7 @@
   <li><strong>Usage counts:</strong> deleted when the usage period ends, <%= hours(limits.USAGE_WINDOW_HOURS) %> after it began.</li>
   <li><strong>Abuse counters:</strong> deleted when their time window ends, within <%= hours(rateLimitHours) %>.</li>
   <li><strong>The AI log:</strong> <%= days(aiLogDays) %>. When you delete your account, its entries are cut loose from it and kept only as anonymous costs.</li>
-  <li><strong>Messages to us:</strong> emails to our addresses, our replies and forwards, and the copy of each Help center message sent to our support address are kept as long as we need them to answer and follow up. The Help center’s own record of a message is deleted with your account. Attachments stay with Resend, which deletes them after 30 days.</li>
+  <li><strong>Messages to us:</strong> emails to our addresses, our replies and forwards, and the copy of each contact form message sent to our support address are kept as long as we need them to answer and follow up. The contact form’s own record of a message is deleted with your account. Attachments stay with Resend, which deletes them after 30 days.</li>
   <li><strong>Payment records:</strong> deleted with your account. The payment provider keeps its own, as the law requires.</li>
   <li><strong>Server logs:</strong> deleted by Railway after <%= days(legal.SERVER_LOG_DAYS) %> at most.</li>
 </ul>

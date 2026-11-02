@@ -13,7 +13,7 @@ module.exports = {
     state: { en: 'Florida', fr: 'de Floride' },
     address: '7901 4th St N #10823, St. Petersburg, FL 33702',
   },
-  // Shown to people (Settings → Help center, the account pages). Help center's form doesn't send here: it sends to
+  // Shown to people (Settings → Contact us, the account pages). Contact us's form doesn't send here: it sends to
   // SUPPORT_INBOX (services/support.js)
   supportEmail: 'support@genlpt.com',
   // Privacy requests and the person in charge of personal information (the privacy policy)

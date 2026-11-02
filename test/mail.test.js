@@ -136,7 +136,7 @@ test('mail: a received email is filed by mailbox, with its thread headers and wh
   assert.deepEqual(fields.from, { name: 'GenLPT', address: 'no-reply@genlpt.com' });
   assert.equal(fields.inReplyTo, '<m1@genlpt.com>');
   assert.deepEqual(fields.references, ['<m0@example.com>', '<m1@genlpt.com>']);
-  assert.deepEqual(mail.counterpartOf(fields), { name: '', address: 'ana@example.com' }); // Help center's: answer the sender, not no-reply
+  assert.deepEqual(mail.counterpartOf(fields), { name: '', address: 'ana@example.com' }); // Contact us's: answer the sender, not no-reply
   assert.equal(fields.attachments[0].contentType, 'image/png');
   assert.equal(fields.read, false);
   assert.equal(mail.receivedFields({ ...email, to: ['typo@genlpt.com'] }).mailbox, null); // Other
@@ -1021,7 +1021,7 @@ test('mail filter: the threads holding an email by that person between those day
   assert.equal(name['from.name'].source, 'A\\.na');
   assert.equal(name['from.name'].flags, 'i');
   assert.ok(address['from.address'].test('a.NA@example.com'));
-  assert.ok(replyTo.replyTo.test('a.na@example.com'), 'a Help center message comes from us, for them');
+  assert.ok(replyTo.replyTo.test('a.na@example.com'), 'a Contact us message comes from us, for them');
   assert.ok(!name['from.name'].test('Axna'), 'taken literally');
   // Daylight saving ended in Florida that morning, so that day is 25 hours long
   assert.deepEqual(asked.match.date, { $gte: new Date('2026-11-01T04:00:00Z'), $lt: new Date('2026-11-02T05:00:00Z') });

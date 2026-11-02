@@ -7,7 +7,7 @@ const helmet = require('helmet');
 
 // Iconify's icon API, and the backup hosts it tries when that one is down
 const ICONIFY_API = ['https://api.iconify.design', 'https://api.simplesvg.com', 'https://api.unisvg.com'];
-// Cloudflare Turnstile (views/app/auth/login.ejs, Help center in public/js/app.js): its script, and its frame
+// Cloudflare Turnstile (views/app/auth/login.ejs, Contact us in public/js/app.js): its script, and its frame
 const TURNSTILE = 'https://challenges.cloudflare.com';
 
 const securityHeaders = ({ production = process.env.NODE_ENV === 'production' } = {}) =>

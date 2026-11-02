@@ -20,7 +20,7 @@ const TRANSACTION_FIELDS = { _id: 0, date: 1, plan: 1, amount: 1, currency: 1, s
 const TRANSACTIONS_SHOWN = 24; // two years of monthly payments
 
 // Settings → Billing's transaction history: the latest payments, newest first, and whether there are older ones
-// (the data export has them all). Each with its own id, for Help center's form to say which one a message is about.
+// (the data export has them all). Each with its own id, for Contact us's form to say which one a message is about.
 async function transactions(userId) {
   const list = await Transaction.find({ userId }, { ...TRANSACTION_FIELDS, _id: 1 }).sort({ date: -1 }).limit(TRANSACTIONS_SHOWN + 1).lean();
   return { transactions: list.slice(0, TRANSACTIONS_SHOWN), more: list.length > TRANSACTIONS_SHOWN };
@@ -66,7 +66,7 @@ async function exportData(userId, now = new Date()) {
 }
 
 // Deletes the account and everything it owns. The AI log keeps each action's cost for pricing the plans, no longer
-// tied to anyone. Payments go too: the provider keeps its own records of them. So do Help center messages (the
+// tied to anyone. Payments go too: the provider keeps its own records of them. So do Contact us messages (the
 // inbox keeps its emailed copies). The account goes last: if a step fails, it's still there to try again.
 async function erase(userId) {
   const owner = ownerOf(userId);

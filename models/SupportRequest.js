@@ -3,7 +3,7 @@ const { SUPPORT_MESSAGE_MAX_CHARS } = require('../config/limits');
 
 const { Schema } = mongoose;
 
-// A message sent from Settings → Help center (POST /api/support). Each one is also emailed to the support inbox
+// A message sent from Settings → Contact us (POST /api/support). Each one is also emailed to the support inbox
 // (services/support.js), with the sender's address as Reply-To; this copy is the record when that email fails
 // (emailed: false). The context is what the app knew when it was sent, so nobody has to ask for it. An account's
 // requests go with its data export and its deletion (services/account.js).
