@@ -1,0 +1,6 @@
+<%# One attachment a forward can send along: in the form, and as the <template> public/js/mail-draft.js makes more from %>
+<label class="flex cursor-pointer items-center gap-2 text-base text-zinc-700">
+  <input type="checkbox" name="attachments" value="<%= choice.id %>" <% if (checked) { %>checked<% } %> class="size-4 shrink-0 accent-brand">
+  <span data-name class="min-w-0 truncate"><%= choice.filename %></span>
+  <span data-size class="shrink-0 text-sm text-zinc-500"><%= choice.size %></span>
+</label>

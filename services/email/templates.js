@@ -1,17 +1,15 @@
-// Account emails, as { subject, text, html }. Wording: dev_resources/account_copy.md.
+// Account emails, as { subject, text, html }. Wording: dev_resources/account_copy.md. Their look: design.js.
 // No email includes anything a visitor typed (not even a name): these go to addresses that anyone can enter,
 // and a name would let a stranger put their own words in an email sent from our domain.
 
 const brand = require('../../config/brand');
 const { VERIFY_LINK_HOURS, RESET_LINK_HOURS, UNVERIFIED_DAYS } = require('../../config/limits');
+const { esc, STYLE, shell } = require('./design');
 
 const { appName } = brand;
 const hours = (n) => (n === 1 ? '1 hour' : `${n} hours`);
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-
-const FONT = "-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-const P = 'margin:0 0 16px;font-size:15px;line-height:1.55;color:#27272a;';
-const LINK = 'color:#c11562;text-decoration:underline;';
+const P = STYLE.paragraph;
+const LINK = STYLE.link;
 
 // Blocks: a string is a paragraph; { button, url } is the one main action; { links: [[label, url], …] } are
 // secondary links; { quote } is text kept as written, line breaks included (a support request's message);
@@ -31,30 +29,36 @@ function compose(subject, blocks, { signed = true } = {}) {
 
   const body = blocks.map((b) => {
     if (typeof b === 'string') return `<p style="${P}">${esc(b)}</p>`;
-    if (b.quote != null) return `<p style="${P}white-space:pre-wrap;border-left:3px solid #e4e4e7;padding-left:12px;">${esc(b.quote)}</p>`;
+    if (b.quote != null) return `<p style="${P}${STYLE.quote}">${esc(b.quote)}</p>`;
     if (b.details) {
       const rows = b.details.map(([label, value]) => `<tr><td style="padding:2px 12px 2px 0;color:#71717a;white-space:nowrap;vertical-align:top;">${esc(label)}</td><td style="padding:2px 0;color:#27272a;word-break:break-all;">${esc(value)}</td></tr>`);
       return `<table style="margin:0 0 16px;border-collapse:collapse;font-size:13px;line-height:1.5;">${rows.join('')}</table>`;
     }
     if (b.button) {
-      return `<p style="margin:24px 0;"><a href="${esc(b.url)}" style="display:inline-block;background:#de247d;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:6px;">${esc(b.button)}</a></p>`
-        + `<p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#71717a;">If the button doesn't work, copy and paste this link into your browser:<br><a href="${esc(b.url)}" style="${LINK}word-break:break-all;">${esc(b.url)}</a></p>`;
+      return `<p style="margin:24px 0;"><a href="${esc(b.url)}" style="${STYLE.button}">${esc(b.button)}</a></p>`
+        + `<p style="${STYLE.small}">If the button doesn't work, copy and paste this link into your browser:<br><a href="${esc(b.url)}" style="${LINK}word-break:break-all;">${esc(b.url)}</a></p>`;
     }
     return `<p style="${P}">${b.links.map(([label, url]) => `<a href="${esc(url)}" style="${LINK}">${esc(label)}</a>`).join(' &nbsp;·&nbsp; ')}</p>`;
   }).join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-<body style="margin:0;padding:24px 16px;background:#fafafa;font-family:${FONT};">
-<div style="max-width:480px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:6px;padding:28px 24px;">
-<p style="margin:0 0 24px;font-size:18px;font-weight:700;color:#18181b;">${esc(appName)}</p>
-${body}
-${signed ? `<p style="margin:24px 0 0;font-size:15px;line-height:1.55;color:#27272a;">The ${esc(appName)} team</p>` : ''}
-</div>
-</body>
-</html>`;
+  const html = shell(`${body}\n${signed ? `<p style="margin:24px 0 0;${STYLE.text}">The ${esc(appName)} team</p>` : ''}`);
 
   return { subject, text, html };
+}
+
+// What an admin writes in Admin → Mail (services/mail.js), in the same design: their words, already cleaned to a few
+// plain tags (cleanNote), their mailbox's signature, and the email it answers or forwards.
+function mailboxMessage({ note = '', signature = '', quote = '' }) {
+  const styled = note
+    .replace(/<div>/g, `<div style="${STYLE.text}">`)
+    .replace(/<(ul|ol)>/g, `<$1 style="${STYLE.list}">`)
+    .replace(/<li>/g, `<li style="${STYLE.text}">`)
+    .replace(/<a /g, `<a style="${STYLE.link}" `);
+  return shell([
+    note && `<div style="${STYLE.paragraph}">${styled}</div>`,
+    signature && `<p style="margin:24px 0 16px;white-space:pre-wrap;${STYLE.text}">${esc(signature)}</p>`,
+    quote && `<p style="${STYLE.small}${STYLE.quote}">${esc(quote)}</p>`,
+  ].filter(Boolean).join('\n'));
 }
 
 // Signup with a new (or never confirmed) address
@@ -183,6 +187,7 @@ function supportRequest(r) {
 }
 
 module.exports = {
+  mailboxMessage,
   supportRequest,
   verifyEmail,
   alreadyRegistered,

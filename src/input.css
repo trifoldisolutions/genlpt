@@ -307,8 +307,19 @@
   .select-option[data-active="true"] { @apply bg-zinc-100 text-zinc-900; }
   .select-option[aria-selected="true"] { @apply font-medium text-zinc-900; }
   .select-option[aria-disabled="true"] { @apply cursor-not-allowed text-zinc-400; }
-  .select-option iconify-icon { @apply text-cerise-600; visibility: hidden; }
-  .select-option[aria-selected="true"] iconify-icon { visibility: visible; }
+  .select-option > iconify-icon { @apply text-cerise-600; visibility: hidden; }
+  .select-option[aria-selected="true"] > iconify-icon { visibility: visible; }
+
+  /* Custom date field (public/js/date-field.js): a button (.field.select-trigger) over a calendar that opens as a popover
+     in the top layer, placed by the script. data-range: between the two ends of a range; aria-current: today;
+     aria-pressed: the day chosen. */
+  .date-calendar { @apply fixed inset-auto z-50 m-0 w-72 rounded-md border border-zinc-200 bg-surface p-2 text-zinc-700 shadow-lg; max-width: calc(100vw - 16px); }
+  .date-day { @apply flex aspect-square items-center justify-center rounded-md text-sm text-zinc-700; }
+  .date-day:not(:disabled):hover { @apply bg-zinc-100 text-zinc-900; }
+  .date-day[data-outside="true"] { @apply text-zinc-400; }
+  .date-day[data-range="true"] { @apply bg-cerise-50 text-zinc-900; }
+  .date-day[aria-current="date"] { @apply font-semibold ring-1 ring-zinc-400 ring-inset; }
+  .date-day[aria-pressed="true"], .date-day[aria-pressed="true"]:not(:disabled):hover { @apply bg-brand font-semibold text-on-brand; }
 
   /* Quiet compact dropdown trigger: session language + model above the title */
   .meta-select { @apply rounded-md border border-zinc-200 bg-transparent px-2 py-1 text-sm text-zinc-700; }
@@ -377,6 +388,16 @@
   :root { --sheet-peek: calc(96px + env(safe-area-inset-bottom)); }
   #workflow { height: var(--sheet-h, var(--sheet-peek)); }
   #workflow.sheet-anim { transition: height 200ms ease; }
+}
+
+/* Admin → Mail (views/admin/mail.ejs): the form to write in is a column of its own from xl. With no room for it, it stays
+   away until it's asked for, then takes the email's place; on a phone, everything's. */
+@media (width < 80rem) {
+  #mail-columns[data-writing="false"] #mail-writing,
+  #mail-columns[data-writing="true"] #mail-reading { display: none; }
+}
+@media (width < 48rem) {
+  #mail-columns[data-writing="true"] :is(#mail-folders, #mail-threads) { display: none; }
 }
 
 /* ---- Auth page ---- */

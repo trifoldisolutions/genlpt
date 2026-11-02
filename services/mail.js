@@ -1,6 +1,12 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
+const sanitizeHtml = require('sanitize-html');
 const MailMessage = require('../models/MailMessage');
 const MailThread = require('../models/MailThread');
+const MailSignature = require('../models/MailSignature');
+const MailDraft = require('../models/MailDraft');
+const { esc } = require('./email/design');
+const { mailboxMessage } = require('./email/templates');
 const { normalizeEmail, emailProblem } = require('../middleware/auth');
 const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, ATTACHMENTS_MAX_BYTES } = require('../config/mail');
 
@@ -139,7 +145,27 @@ function htmlToText(html) {
 }
 
 const bodyText = (message) => (message.text ? String(message.text) : htmlToText(message.html));
-const snippetOf = (message) => bodyText(message).replace(/\s+/g, ' ').trim().slice(0, 160);
+// The start of what an email says: what comes before its signature, marked the standard way, "-- " on its own line
+const snippetOf = (message) => {
+  const body = bodyText(message);
+  return (body.split(/\n-- ?\n/)[0].trim() || body).replace(/\s+/g, ' ').trim().slice(0, 160);
+};
+
+// Plain text, apart from the quote that ends it: its "> " lines, without those marks, under their "On <date>, <who>
+// wrote:" (which a mail app may wrap onto a second line). Lines quoted between someone's answers stay in what they wrote.
+const ATTRIBUTION = /^(?:On|Le) .*(?:wrote|a écrit)\s?:\s*$/;
+function splitQuote(text) {
+  const lines = String(text).split(/\r?\n/);
+  let start = lines.length;
+  while (start > 0 && /^\s*(?:>|$)/.test(lines[start - 1])) start -= 1;
+  if (!lines.slice(start).some((line) => line.trim())) return { written: String(text), quote: '' };
+  if (ATTRIBUTION.test(lines[start - 1])) start -= 1;
+  else if (ATTRIBUTION.test(`${lines[start - 2]} ${lines[start - 1]}`)) start -= 2;
+  return {
+    written: lines.slice(0, start).join('\n').trimEnd(),
+    quote: lines.slice(start).map((line) => line.replace(/^\s*> ?/, '')).join('\n').trim(),
+  };
+}
 
 // Which mailbox an email came to: the first of ours among its addresses; null: Other
 const mailboxOf = (list) => list.find((a) => MAILBOX_ADDRESSES.includes(a)) || null;
@@ -206,7 +232,7 @@ async function findThread(fields, counterpart) {
 
 // Saves a message in its thread (threadId, else findThread, else a new one) and brings the thread up to date.
 // A message already saved (same Resend id) comes back as it was.
-async function file(fields, { threadId = null, counterpart }) {
+async function file(fields, { threadId = null, counterpart, searchBody = null }) {
   if (fields.resendId) {
     const saved = await MailMessage.findOne({ resendId: fields.resendId }).lean();
     if (saved) return saved;
@@ -225,14 +251,16 @@ async function file(fields, { threadId = null, counterpart }) {
   }
   let message;
   try {
-    message = (await MailMessage.create({ ...fields, threadId: id, searchText: searchTextOf(fields) })).toObject();
+    const searchText = searchTextOf(searchBody === null ? fields : { ...fields, text: searchBody });
+    message = (await MailMessage.create({ ...fields, threadId: id, searchText })).toObject();
   } catch (err) {
     if (err.code !== 11000) throw err;
     if (created) await MailThread.deleteOne({ _id: id }); // the webhook and a sync crossed: the other one saved it
     return MailMessage.findOne({ resendId: fields.resendId }).lean();
   }
   const unread = fields.direction === 'in' ? 1 : 0;
-  await MailThread.updateOne({ _id: id }, { $inc: { messages: 1, unread } });
+  // Anything new brings a thread back from Trash: a customer's answer mustn't go unseen
+  await MailThread.updateOne({ _id: id }, { $inc: { messages: 1, unread }, $set: { trashedAt: null } });
   // A sync can save an older message after a newer one: only the latest one is the thread's last
   await MailThread.updateOne(
     { _id: id, $or: [{ lastAt: { $lte: fields.date } }, { snippet: null }] },
@@ -330,8 +358,43 @@ function addressList(value) {
   return { value: list };
 }
 
+// What the form's editor (public/js/mail-editor.js) can make, and all that's kept of what it sends, whatever it sends:
+// no styles, scripts, images or attributes but a link's address, and links only to web pages or email addresses.
+const NOTE_RULES = {
+  allowedTags: ['div', 'p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li'],
+  allowedAttributes: { a: ['href'] },
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowProtocolRelative: false,
+  transformTags: { p: 'div', strong: 'b', em: 'i' },
+};
+const cleanNote = (html) => sanitizeHtml(String(html || ''), NOTE_RULES);
+
+// A note's plain-text version, for the email's text part, snippets and search: lists as lists, links with their address
+function noteText(html) {
+  const lists = [];
+  const marked = html
+    .replace(/<a href="([^"]*)">([\s\S]*?)<\/a>/g, (match, href, label) => {
+      const shown = href.replace(/^mailto:/i, '');
+      return label === href || label === shown ? label : `${label} (${shown})`;
+    })
+    .replace(/<(\/?)(ul|ol|li)>/g, (match, closing, tag) => {
+      if (tag !== 'li') {
+        if (closing) lists.pop();
+        else lists.push(tag === 'ol' ? { n: 0 } : null);
+        return '\n';
+      }
+      if (closing) return '\n';
+      const list = lists[lists.length - 1];
+      return list ? `${(list.n += 1)}. ` : '- ';
+    });
+  return htmlToText(marked);
+}
+
+// The form without its editor sends plain text: the same note, for the email's design
+const plainNote = (text) => text.split('\n').map((line) => `<div>${line ? esc(line) : '<br>'}</div>`).join('');
+
 // The compose, reply or forward form, checked: { value } or { error } (a message for the form). A forward's message is
-// optional: the email forwarded is what it says.
+// optional: the email forwarded is what it says. value.text: the message in plain text; value.note: in the few tags above.
 function cleanDraft(body) {
   const from = MAILBOXES.find((m) => m.address === body?.from);
   if (!from) return { error: 'Choose the address to send from.' };
@@ -344,7 +407,8 @@ function cleanDraft(body) {
   const subject = String(body.subject || '').replace(/\s+/g, ' ').trim();
   if (!subject) return { error: 'Add a subject.' };
   if (subject.length > SUBJECT_MAX_CHARS) return { error: `Keep the subject under ${SUBJECT_MAX_CHARS} characters.` };
-  const text = String(body.body || '').replace(/\r\n?/g, '\n').trim();
+  const edited = body.format === 'html' ? cleanNote(body.body) : null;
+  const text = (edited === null ? String(body.body || '') : noteText(edited)).replace(/\r\n?/g, '\n').trim();
   const forwarding = isId(body.forwarding) ? body.forwarding : null;
   if (!text && !forwarding) return { error: 'Write a message.' };
   if (text.length > BODY_MAX_CHARS) return { error: `Keep the message under ${BODY_MAX_CHARS} characters.` };
@@ -355,6 +419,7 @@ function cleanDraft(body) {
       cc: cc.value,
       subject,
       text,
+      note: text ? edited ?? plainNote(text) : '',
       answering: !forwarding && isId(body.answering) ? body.answering : null,
       forwarding,
       attachments: forwarding ? [].concat(body.attachments || []).map(String) : [],
@@ -390,13 +455,14 @@ function forwardedText(message) {
   return `${lines.join('\n')}\n\n${bodyText(message).trim()}`;
 }
 
+const tooBig = () => new MailError('too_big', `These attachments are over the ${Math.floor(ATTACHMENTS_MAX_BYTES / 1024 / 1024)} MB an email can carry. Remove some.`);
+
 // The attachments chosen to go along with a forward, for Resend: their content, not their download links. A link can
 // change each time it's asked for, and a form sent twice must be the same request to Resend to stay one email.
-async function forwardAttachments(message, ids, fetchImpl = fetch) {
+// otherBytes: what the email carries besides them.
+async function forwardAttachments(message, ids, { fetchImpl = fetch, otherBytes = 0 } = {}) {
   const chosen = (message.attachments || []).filter((a) => a.id && ids.includes(a.id));
-  if (chosen.reduce((sum, a) => sum + (a.size || 0), 0) > ATTACHMENTS_MAX_BYTES) {
-    throw new MailError('too_big', `These attachments are over the ${Math.floor(ATTACHMENTS_MAX_BYTES / 1024 / 1024)} MB an email can carry. Untick some.`);
-  }
+  if (chosen.reduce((sum, a) => sum + (a.size || 0), otherBytes) > ATTACHMENTS_MAX_BYTES) throw tooBig();
   return Promise.all(chosen.map(async (a) => {
     const url = await attachmentUrl(String(message._id), a.id);
     const res = url && (await fetchImpl(url, { signal: AbortSignal.timeout(ATTACHMENTS_TIMEOUT_MS) }).catch(() => null));
@@ -407,16 +473,26 @@ async function forwardAttachments(message, ids, fetchImpl = fetch) {
 
 // Sends a checked draft (cleanDraft) from its mailbox: a reply when it answers a message, a forward when it forwards
 // one, else a new thread. A forward is a new thread too: it's with whom it went to, so their answer can't be taken for
-// the customer's, or a reply to it go to the customer. The draft's key makes a form sent twice (a double click, a
-// reload) one email. Returns the saved message.
-async function send(draft, { sentBy = null } = {}) {
+// the customer's, or a reply to it go to the customer. uploads: the files attached to the form (multer's). Like
+// forwarded attachments, they go to Resend and only what they are is kept here. The draft's key makes a form sent twice
+// (a double click, a reload) one email. Returns the saved message.
+async function send(draft, { sentBy = null, uploads = [] } = {}) {
+  const attached = uploads.filter((file) => file.size);
+  const attachedBytes = attached.reduce((sum, file) => sum + file.size, 0);
+  if (attachedBytes > ATTACHMENTS_MAX_BYTES) throw tooBig();
   const forwarding = draft.forwarding ? await MailMessage.findById(draft.forwarding).lean() : null;
   if (draft.forwarding && !forwarding) throw new MailError('gone', 'That email no longer exists, so it can’t be forwarded.');
   const answering = draft.answering ? await MailMessage.findById(draft.answering).lean() : null;
-  const text = forwarding
-    ? [draft.text, forwardedText(forwarding)].filter(Boolean).join('\n\n')
-    : answering ? `${draft.text}\n\n${quoted(answering)}` : draft.text;
-  const attachments = forwarding ? await forwardAttachments(forwarding, draft.attachments) : [];
+  // The signature follows what the admin wrote: a forward with nothing of theirs has none
+  const signature = draft.text ? (await signatures())[draft.from.address] : '';
+  const under = forwarding ? forwardedText(forwarding) : answering ? quoted(answering) : '';
+  const text = [draft.text, signature && `-- \n${signature}`, under].filter(Boolean).join('\n\n');
+  // The design marks a quote with its rule, so only the text version needs the "> "
+  const html = mailboxMessage({ note: draft.note, signature, quote: forwarding ? under : splitQuote(under).quote });
+  const attachments = [
+    ...(forwarding ? await forwardAttachments(forwarding, draft.attachments, { otherBytes: attachedBytes }) : []),
+    ...attached.map((file) => ({ filename: file.originalname, content: file.buffer.toString('base64'), size: file.size, contentType: file.mimetype })),
+  ];
   const { references, headers } = replyHeaders(answering);
   const sent = await resend('/emails', {
     method: 'POST',
@@ -428,6 +504,7 @@ async function send(draft, { sentBy = null } = {}) {
       ...(draft.cc.length ? { cc: draft.cc } : {}),
       subject: draft.subject,
       text,
+      html,
       headers,
       ...(attachments.length ? { attachments: attachments.map(({ filename, content }) => ({ filename, content })) } : {}),
     },
@@ -446,10 +523,12 @@ async function send(draft, { sentBy = null } = {}) {
     replyTo: [],
     subject: draft.subject,
     text,
+    html,
     attachments: attachments.map(({ filename, size, contentType }) => ({ filename, size, contentType })),
     date: new Date(),
     sentBy,
-  }, { threadId: answering?.threadId || null, counterpart });
+    // Search goes by what was written: every signature's "GenLPT Support" would make "support" find every email sent
+  }, { threadId: answering?.threadId || null, counterpart, searchBody: [draft.text, under].filter(Boolean).join('\n\n') });
   if (answering) await markRead(answering.threadId);
   // Resend gives the email its Message-ID: once known, a reply that names only it still finds this thread
   setTimeout(() => {
@@ -461,12 +540,111 @@ async function send(draft, { sentBy = null } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Drafts: what an admin saved to finish later. Unlike the draft the form keeps while it's being written
+// (public/js/mail-draft.js), these last, and follow them to another browser.
+
+const DRAFTS_LIST_SIZE = 100;
+const DRAFT_ADDRESSES_MAX_CHARS = 2000;
+
+// Where a draft's files are: the file's bytes, apart from the draft, as they can be larger than a document can hold
+const draftFileStore = {
+  bucket: () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'mail_draft_files' }),
+  put(file) {
+    return new Promise((resolve, reject) => {
+      const upload = this.bucket().openUploadStream(file.originalname);
+      upload.on('finish', () => resolve(upload.id));
+      upload.on('error', reject);
+      upload.end(file.buffer);
+    });
+  },
+  read: (id) => draftFileStore.bucket().openDownloadStream(id),
+  remove: (id) => draftFileStore.bucket().delete(id).catch((err) => console.error('[mail] draft file:', err.message)),
+};
+
+// Saves the form as it is: over the draft it came from when it's still theirs, else as a new one. Null when there's
+// nothing in it to save.
+async function saveDraft(body, { by, uploads = [] }) {
+  const attached = uploads.filter((file) => file.size);
+  if (attached.reduce((sum, file) => sum + file.size, 0) > ATTACHMENTS_MAX_BYTES) throw tooBig();
+  const note = body.format === 'html' ? cleanNote(body.body) : plainNote(String(body.body || '').replace(/\r\n?/g, '\n').trim());
+  const text = noteText(note).trim();
+  if (text.length > BODY_MAX_CHARS) throw new MailError('too_long', `Keep the message under ${BODY_MAX_CHARS} characters.`);
+  const line = (value, max) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const fields = {
+    from: MAILBOXES.find((m) => m.address === body.from)?.address || '',
+    to: line(body.to, DRAFT_ADDRESSES_MAX_CHARS),
+    cc: line(body.cc, DRAFT_ADDRESSES_MAX_CHARS),
+    subject: line(body.subject, SUBJECT_MAX_CHARS),
+    body: text ? note : '',
+    text,
+    t: isId(body.t) ? body.t : '',
+    answering: isId(body.answering) ? body.answering : '',
+    forwarding: isId(body.forwarding) ? body.forwarding : '',
+    attachments: [].concat(body.attachments || []).map(String),
+  };
+  if (!fields.to && !fields.cc && !fields.subject && !fields.text && !attached.length) return null;
+  const files = await Promise.all(attached.map(async (file) => ({
+    id: await draftFileStore.put(file),
+    filename: file.originalname,
+    contentType: file.mimetype,
+    size: file.size,
+  })));
+  const earlier = isId(body.d) ? await MailDraft.findOne({ _id: body.d, createdBy: by }).lean() : null;
+  if (!earlier) return MailDraft.create({ ...fields, files, createdBy: by });
+  const saved = await MailDraft.findOneAndUpdate({ _id: earlier._id }, { $set: { ...fields, files } }, { returnDocument: 'after' }).lean();
+  await Promise.all((earlier.files || []).map((file) => draftFileStore.remove(file.id)));
+  return saved;
+}
+
+const listDrafts = (by) => MailDraft.find({ createdBy: by }, { body: 0 }).sort({ updatedAt: -1 }).limit(DRAFTS_LIST_SIZE).lean();
+const countDrafts = (by) => MailDraft.countDocuments({ createdBy: by });
+const getDraft = (id, by) => (isId(id) ? MailDraft.findOne({ _id: id, createdBy: by }).lean() : null);
+
+async function deleteDraft(id, by) {
+  const draft = await getDraft(id, by);
+  if (!draft) return;
+  await MailDraft.deleteOne({ _id: draft._id });
+  await Promise.all((draft.files || []).map((file) => draftFileStore.remove(file.id)));
+}
+
+// ---------------------------------------------------------------------------
+// Signatures
+
+// What goes under an admin's words, by mailbox address: what's been set in Admin → Mail → Signatures, else the mailbox's name
+async function signatures() {
+  const saved = new Map((await MailSignature.find({}, { address: 1, text: 1 }).lean()).map((s) => [s.address, s.text]));
+  return Object.fromEntries(MAILBOXES.map((m) => [m.address, saved.get(m.address) ?? m.name]));
+}
+
+const cleanSignature = (value) => String(value || '').replace(/\r\n?/g, '\n').trim();
+
+async function saveSignatures(byAddress, { by = null } = {}) {
+  await Promise.all(MAILBOXES.map(({ address }) => MailSignature.updateOne(
+    { address },
+    { $set: { text: cleanSignature(byAddress[address]), updatedBy: by } },
+    { upsert: true }
+  )));
+}
+
+// ---------------------------------------------------------------------------
 // Searching
 
 const QUERY_MAX_CHARS = 200;
 const QUERY_MAX_WORDS = 10;
 
 const cleanQuery = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, QUERY_MAX_CHARS) : '');
+
+// What a list is narrowed to, from its filter (views/admin/partials/mail-filter.ejs): unread, who wrote it, whom it was
+// sent to, between which days. What makes no sense is left out, and days the wrong way round are put right.
+const cleanDay = (value) => (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? value : '');
+function cleanFilters(query) {
+  const [since, until] = [cleanDay(query?.since), cleanDay(query?.until)];
+  const swapped = since && until && since > until;
+  return { unreadOnly: query?.unread === '1', author: cleanQuery(query?.author), recipient: cleanQuery(query?.recipient), since: swapped ? until : since, until: swapped ? since : until };
+}
+const filterParams = ({ unreadOnly, author, recipient, since, until }) => ({ ...(unreadOnly ? { unread: '1' } : {}), ...(author ? { author } : {}), ...(recipient ? { recipient } : {}), ...(since ? { since } : {}), ...(until ? { until } : {}) });
+// How many are on: the two days count as one
+const countFilters = ({ unreadOnly, author, recipient, since, until }) => [unreadOnly, author, recipient, since || until].filter(Boolean).length;
 
 // Lowercase, without accents and with one kind of apostrophe, so "recu" finds "Reçu" and "don't" finds "don’t"
 const folded = (value) => String(value || '')
@@ -521,39 +699,84 @@ async function threadsWith(words) {
   return MailMessage.distinct('threadId', { $and: words.map((word) => ({ searchText: asRegex(word) })) });
 }
 
+// The threads holding an email written by this person (part of a name or an address, or of the Reply-To of a message sent
+// for them: Help center's), sent to this one (part of an address, the only thing kept of whom it went to, in To or Cc),
+// between these days. One email has to be all of those.
+function threadsMatching({ author, recipient, since, until }) {
+  const match = {};
+  const like = (text) => new RegExp(asRegex(text).source, 'i');
+  const who = [];
+  if (author) who.push({ $or: [{ 'from.name': like(author) }, { 'from.address': like(author) }, { replyTo: like(author) }] });
+  if (recipient) who.push({ $or: [{ to: like(recipient) }, { cc: like(recipient) }] });
+  if (who.length) match.$and = who;
+  if (since || until) match.date = { ...(since ? { $gte: startOfDay(since) } : {}), ...(until ? { $lt: startOfDay(until, 1) } : {}) };
+  return MailMessage.distinct('threadId', match);
+}
+
 // ---------------------------------------------------------------------------
 // The mailbox's views
 
-// The list's folders: every mailbox's mail, each mailbox, and Other (addresses of the domain that aren't one)
+// The mailboxes to choose from, one at a time: together, sent and received are hard to tell apart. Other: any address of
+// the domain that isn't one, or no longer is, so that no conversation is out of reach.
 const localPart = (address) => address.split('@')[0];
 const BOXES = [
-  { key: 'all', label: 'All mail' },
-  ...MAILBOXES.map((m) => ({ key: localPart(m.address), label: localPart(m.address)[0].toUpperCase() + localPart(m.address).slice(1), address: m.address })),
-  { key: 'other', label: 'Other' },
+  ...MAILBOXES.map((m) => ({ key: localPart(m.address), label: localPart(m.address)[0].toUpperCase() + localPart(m.address).slice(1), address: m.address, icon: m.icon })),
+  { key: 'other', label: 'Other', note: 'Other addresses', icon: 'folder' },
 ];
 const boxOf = (key) => BOXES.find((b) => b.key === key) || BOXES[0];
-const boxFilter = (box) => (box.key === 'all' ? {} : { mailbox: box.key === 'other' ? null : box.address });
+const boxOfThread = (thread) => BOXES.find((b) => b.address === thread.mailbox) || boxOf('other');
+
+// What's in the mailbox chosen, in the sidebar. Trash is the only one holding what was deleted. A conversation is in Inbox
+// once it holds an email received and in Sent once it holds one sent, so one that was answered is in both and none is in neither.
+const FOLDERS = [
+  { key: 'inbox', label: 'Inbox', direction: 'in' },
+  { key: 'sent', label: 'Sent', direction: 'out' },
+  { key: 'starred', label: 'Starred', starred: true },
+  { key: 'drafts', label: 'Drafts', drafts: true }, // the admin's own, what they saved to finish later, from any mailbox
+  { key: 'trash', label: 'Trash', trash: true },
+];
+const folderOf = (key) => FOLDERS.find((f) => f.key === key) || FOLDERS[0];
 
 const LIST_SIZE = 50;
 
-// A folder's threads, latest first, LIST_SIZE at a time (before: the lastAt to continue from; query: only those with
-// an email that has its words)
-async function listThreads(box, { unreadOnly = false, before = null, query = '' } = {}) {
-  const filter = { ...boxFilter(box), messages: { $gt: 0 } };
+// What a folder of a mailbox lists, or with no folder all that isn't in Trash (query: only threads with an email that has its words)
+async function listFilter(box, { folder = {}, unreadOnly = false, author = '', recipient = '', since = '', until = '', query = '' } = {}) {
+  const filter = { mailbox: box.address || { $nin: MAILBOX_ADDRESSES }, trashedAt: folder.trash ? { $ne: null } : null, messages: { $gt: 0 } };
+  if (folder.starred) filter.starred = true;
   if (unreadOnly) filter.unread = { $gt: 0 };
-  if (before) filter.lastAt = { $lt: before };
   const words = searchWords(query);
   if (words.length) filter._id = { $in: await threadsWith(words) };
-  const threads = await MailThread.find(filter).sort({ lastAt: -1 }).limit(LIST_SIZE + 1).lean();
-  return { threads: threads.slice(0, LIST_SIZE), more: threads.length > LIST_SIZE };
+  const among = [];
+  if (folder.direction) among.push({ _id: { $in: await MailMessage.distinct('threadId', { direction: folder.direction }) } });
+  if (author || recipient || since || until) among.push({ _id: { $in: await threadsMatching({ author, recipient, since, until }) } });
+  if (among.length) filter.$and = among;
+  return filter;
 }
 
-// Unread messages by folder key
+// A folder's threads in a mailbox, latest first, LIST_SIZE at a time (before: the lastAt to continue from). total: with a
+// filter on, how many it found on all the pages.
+async function listThreads(box, { before = null, ...shown } = {}) {
+  const filter = await listFilter(box, shown);
+  const total = countFilters(shown) ? await MailThread.countDocuments(filter) : null;
+  if (before) filter.lastAt = { $lt: before };
+  const threads = await MailThread.find(filter).sort({ lastAt: -1 }).limit(LIST_SIZE + 1).lean();
+  return { threads: threads.slice(0, LIST_SIZE), more: threads.length > LIST_SIZE, total };
+}
+
+// The threads on either side of one in a folder's list, whichever of its pages they're on: newer above it, older below
+async function threadsAround(box, thread, shown = {}) {
+  const filter = await listFilter(box, shown);
+  const nearest = (lastAt, order) => MailThread.findOne({ ...filter, lastAt }, { lastAt: 1 }).sort({ lastAt: order }).lean();
+  const [newer, older] = await Promise.all([nearest({ $gt: thread.lastAt }, 1), nearest({ $lt: thread.lastAt }, -1)]);
+  return { newer, older };
+}
+
+// Unread messages by mailbox, and all of them
 async function unreadCounts() {
-  const rows = await MailThread.aggregate([{ $match: { unread: { $gt: 0 } } }, { $group: { _id: '$mailbox', unread: { $sum: '$unread' } } }]);
+  const rows = await MailThread.aggregate([{ $match: { unread: { $gt: 0 }, trashedAt: null } }, { $group: { _id: '$mailbox', unread: { $sum: '$unread' } } }]);
   const counts = { all: 0 };
   for (const row of rows) {
-    const key = row._id ? localPart(row._id) : 'other';
+    const key = MAILBOX_ADDRESSES.includes(row._id) ? localPart(row._id) : 'other';
     counts[key] = (counts[key] || 0) + row.unread;
     counts.all += row.unread;
   }
@@ -581,6 +804,15 @@ async function markUnread(threadId) {
   await MailThread.updateOne({ _id: threadId }, { $set: { unread: 1 } });
 }
 
+async function setStarred(threadId, starred) {
+  if (isId(threadId)) await MailThread.updateOne({ _id: threadId }, { $set: { starred } });
+}
+
+// Deleting moves a thread to Trash rather than erasing it: a sync would bring back any received email it no longer finds
+async function setTrashed(threadId, trashed) {
+  if (isId(threadId)) await MailThread.updateOne({ _id: threadId }, { $set: { trashedAt: trashed ? new Date() : null } });
+}
+
 // Dates in the business's time zone: the list's short one (a time today, a day this year, else a full date) and a message's
 const dateParts = (date, options) => new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, ...options }).format(date);
 function shortDate(date, now = new Date()) {
@@ -591,9 +823,38 @@ function shortDate(date, now = new Date()) {
 }
 const fullDate = (date) => dateParts(date, { dateStyle: 'medium', timeStyle: 'short' });
 
+// When a day (YYYY-MM-DD) starts in that time zone, or plus days after it
+function startOfDay(day, plus = 0) {
+  const [year, month, date] = day.split('-').map(Number);
+  const utc = Date.UTC(year, month - 1, date + plus);
+  const there = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+    .formatToParts(utc).map((part) => [part.type, Number(part.value)]));
+  return new Date(2 * utc - Date.UTC(there.year, there.month - 1, there.day, there.hour, there.minute, there.second));
+}
+// A filter's day, as it's shown
+const dayLabel = (day) => new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', dateStyle: 'medium' }).format(new Date(`${day}T00:00:00Z`));
+
+// What a list's filter is set to, in words, for the search field: "Unread only, from Ana, between Jul 1 and Jul 31, 2026"
+function filterHint({ unreadOnly, author, recipient, since, until }) {
+  let dates = '';
+  if (since && since === until) dates = `on ${dayLabel(since)}`;
+  else if (since && until) {
+    const sameYear = since.slice(0, 4) === until.slice(0, 4);
+    dates = `between ${sameYear ? dayLabel(since).replace(/, \d+$/, '') : dayLabel(since)} and ${dayLabel(until)}`;
+  } else if (since) dates = `since ${dayLabel(since)}`;
+  else if (until) dates = `until ${dayLabel(until)}`;
+  const hint = [unreadOnly && 'unread only', author && `from ${author}`, recipient && `to ${recipient}`, dates].filter(Boolean).join(', ');
+  return hint && hint[0].toUpperCase() + hint.slice(1);
+}
+
+const fileSize = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round((n || 0) / 1024))} KB`);
+
 // What a received email's HTML is shown in: a frame with no scripts, forms or access to the page (sandbox, in the
 // view); links open in a new tab. Images from other sites stay out: the page's CSP doesn't allow them (no tracking
 // pixels); the email's own, inlined as data: URIs, show.
+// A sent email as it went out, in its frame (views/admin/mail.ejs): links open in a new tab
+const sentFrameDoc = (html) => html.replace('<body', '<head><meta charset="utf-8"><base target="_blank"></head><body');
+
 const frameDoc = (html) => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px;font:14px/1.5 system-ui,sans-serif;color:#18181b;background:#fff;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
 
 // Whether the receiving server found the sender's address forged or unconfirmed: shown as a warning
@@ -611,21 +872,44 @@ module.exports = {
   attachmentUrl,
   cleanDraft,
   send,
+  cleanNote,
+  signatures,
+  saveSignatures,
+  saveDraft,
+  listDrafts,
+  countDrafts,
+  getDraft,
+  deleteDraft,
+  draftFileStore,
+  sentFrameDoc,
   BOXES,
   boxOf,
+  boxOfThread,
+  FOLDERS,
+  folderOf,
   QUERY_MAX_CHARS,
   cleanQuery,
+  cleanFilters,
+  filterParams,
+  countFilters,
+  filterHint,
   matchesSearch,
   listThreads,
+  threadsAround,
   unreadCounts,
   getThread,
   markRead,
   markUnread,
+  setStarred,
+  setTrashed,
   replySubject,
   forwardSubject,
+  bodyText,
   snippetOf,
+  splitQuote,
   shortDate,
   fullDate,
+  fileSize,
   frameDoc,
   unverified,
   formatAddress,
@@ -643,4 +927,5 @@ module.exports = {
   forwardAttachments,
   searchTextOf,
   searchWords,
+  noteText,
 };

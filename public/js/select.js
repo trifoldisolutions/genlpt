@@ -4,7 +4,9 @@
 // The combobox takes the select's place in its parent. The list opens as a popover, in the top layer, so no
 // panel or dialog clips it, placed under the combobox (above it when there's no room below).
 // Options: compact (the quiet small look of the session's language/model row); fit (as wide as the widest
-// option, like a native select, instead of the current one's width).
+// option, like a native select, instead of the current one's width). An <option hidden> is a prompt: shown, like a
+// placeholder, until something is chosen, and not in the list. An option with data-icon, data-title and data-detail
+// shows as an icon on a tile beside those two lines, in the list and once chosen.
 // Keyboard and screen readers follow WAI-ARIA's select-only combobox:
 // https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/
 
@@ -26,6 +28,18 @@ function icon(name, size, className = '') {
   node.setAttribute('height', String(size));
   node.setAttribute('aria-hidden', 'true');
   return node;
+}
+
+// What an option shows
+function face(option) {
+  if (!option?.dataset.icon) return el('span', 'min-w-0 truncate', option?.textContent || '');
+  const tile = el('span', 'flex size-9 shrink-0 items-center justify-center rounded-md bg-zinc-200/70 text-zinc-600');
+  tile.append(icon(option.dataset.icon, 18));
+  const lines = el('span', 'min-w-0');
+  lines.append(el('span', 'block truncate font-medium text-zinc-900', option.dataset.title), el('span', 'block truncate text-sm font-normal text-zinc-500', option.dataset.detail));
+  const row = el('span', 'flex min-w-0 items-center gap-2.5');
+  row.append(tile, lines);
+  return row;
 }
 
 export function customSelect(select, { compact = false, fit = false } = {}) {
@@ -71,7 +85,7 @@ export function customSelect(select, { compact = false, fit = false } = {}) {
   let built = ''; // the options the items were built from
   let active = -1;
   const isOpen = () => !list.hidden;
-  const enabled = (j) => !!options[j] && !options[j].disabled;
+  const enabled = (j) => !!options[j] && !options[j].disabled && !options[j].hidden;
   const firstEnabled = () => options.findIndex((_, j) => enabled(j));
   const lastEnabled = () => options.findLastIndex((_, j) => enabled(j));
   // The next option that can be chosen from `from` in direction `dir`, or `from` at the end of the list
@@ -83,15 +97,16 @@ export function customSelect(select, { compact = false, fit = false } = {}) {
   // Options can change after the dropdown is made (the model list): rebuilt when they do
   function build() {
     options = [...select.options];
-    const key = options.map((o) => [o.value, o.textContent, o.disabled].join('\u0000')).join('\u0001');
+    const key = options.map((o) => [o.value, o.textContent, o.disabled, o.hidden].join('\u0000')).join('\u0001');
     if (key === built) return;
     built = key;
     items = options.map((option, i) => {
-      const item = el('li', 'select-option');
+      const item = el('li', `select-option${option.dataset.icon ? ' gap-2.5 rounded-md p-1.5' : ''}`);
       item.id = `${id}-option-${i}`;
       item.setAttribute('role', 'option');
       if (option.disabled) item.setAttribute('aria-disabled', 'true');
-      item.append(el('span', 'min-w-0 truncate', option.textContent), icon('check', 18, 'shrink-0'));
+      item.hidden = option.hidden;
+      item.append(face(option), icon('check', 18, 'shrink-0'));
       item.addEventListener('mousemove', () => { if (enabled(i)) setActive(i); });
       item.addEventListener('click', () => { if (enabled(i)) choose(i); });
       return item;
@@ -205,8 +220,13 @@ export function customSelect(select, { compact = false, fit = false } = {}) {
         return text;
       }));
     } else {
-      value.textContent = options[current]?.textContent || '';
+      value.replaceChildren(face(options[current]));
     }
+    // The same height with an address chosen or not, so that choosing one doesn't move what's under it
+    trigger.classList.toggle('min-h-12', options.some((o) => o.dataset.icon));
+    trigger.classList.toggle('py-1', !!options[current]?.dataset.icon);
+    trigger.classList.toggle('pl-1', !!options[current]?.dataset.icon);
+    value.classList.toggle('text-zinc-400', !!options[current]?.hidden);
     items.forEach((item, j) => item.setAttribute('aria-selected', String(j === current)));
     // Without a <label>, the select's own aria-label and title name the combobox
     if (!label) {

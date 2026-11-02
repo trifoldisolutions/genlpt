@@ -35,6 +35,8 @@
     "helmet": "^8.3.0",
     "mongoose": "^9.10.2",
     "morgan": "^1.12.1",
+    "multer": "^2.5.0",
+    "sanitize-html": "^2.18.1",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {

@@ -1,0 +1,7 @@
+<%# A button on the thread open that posts what's done to it. fields: what the form carries, the list as it is to come back to. %>
+<form method="post" action="/mail/threads/<%= id %>/<%= action %>" data-busy>
+  <% Object.entries(fields).forEach(([name, value]) => { %><input type="hidden" name="<%= name %>" value="<%= value %>"><% }) %>
+  <button type="submit" class="icon-btn <%= locals.tone || '' %>" aria-label="<%= label %>" title="<%= label %>" <% if (locals.pressed !== undefined) { %>aria-pressed="<%= pressed %>"<% } %> <% if (locals.off) { %>disabled<% } %>>
+    <iconify-icon icon="boxicons:<%= icon %>" width="18" height="18" aria-hidden="true"></iconify-icon>
+  </button>
+</form>

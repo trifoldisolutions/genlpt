@@ -1,0 +1,7 @@
+<%# What the filter is set to, in words, in its own color and container so it can't pass for what was typed, with a cross to clear it. className: when it shows; id: to describe the search field. %>
+<span class="<%= className %> min-w-0 items-center gap-1 rounded-md bg-cerise-50 py-0.5 pr-0.5 pl-2 text-sm font-medium text-cerise-700">
+  <span <% if (locals.id) { %>id="<%= id %>"<% } %> title="<%= hint %>" class="min-w-0 truncate"><%= hint %></span>
+  <a href="<%= clearFilters %>" class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-cerise-100 pointer-coarse:size-8" aria-label="Clear filters" title="Clear filters">
+    <iconify-icon icon="boxicons:x" width="14" height="14" aria-hidden="true"></iconify-icon>
+  </a>
+</span>

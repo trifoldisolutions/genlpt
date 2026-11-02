@@ -1,81 +1,128 @@
 <%- include('partials/head') %>
 <%
-  // The team's mailbox (routes/admin.js), in three columns that scroll on their own: the mailboxes; a mailbox's threads;
-  // the thread open, or a form. Links and forms. On a tablet the mailboxes are a row above the other two; on a phone it's
-  // one thing at a time, the list or the thread.
-  const filterParams = { box: box.key, ...(q ? { q } : {}), ...(unreadOnly ? { unread: '1' } : {}) };
+  // The team's mailbox (routes/admin.js), in four columns that scroll on their own: the mailbox to show and its folders;
+  // a folder's threads; the thread open; the form to write in, empty until Reply, Forward or New email fill it in (public/js/mail-draft.js).
+  // With less room the form takes the email's place when asked for (src/input.css). On a tablet the mailboxes are a row
+  // above the others; on a phone it's one thing at a time, the list, the thread or the form.
+  const inFolder = (f) => (f.key === folders[0].key ? {} : { folder: f.key });
+  const filterParams = { box: box.key, ...inFolder(folder), ...(q ? { q } : {}), ...mail.filterParams(filters) };
   const listParams = { ...filterParams, ...(before ? { before: before.toISOString() } : {}) };
   const href = (params = {}) => '/mail?' + new URLSearchParams({ ...listParams, ...params });
   const threadHref = (params = {}) => href({ t: String(opened.thread._id), ...params });
+  // To a thread beside the one open. On another of the list's pages it takes the list along: before is where a page starts.
+  const stepTo = (t, before) => t && href({ t: String(t._id), ...(list.threads.some((row) => String(row._id) === String(t._id)) ? {} : { before: new Date(before).toISOString() }) });
   const who = (a) => (a?.name ? a.name : a?.address) || 'Unknown sender';
   const initials = (a) => {
     const words = (a?.name || a?.address || '?').split('@')[0].split(/[\s._-]+/).filter(Boolean);
     return words.slice(0, 2).map((word) => [...word][0]).join('').toUpperCase() || '?';
   };
-  const size = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round((n || 0) / 1024))} KB`);
-  const mailboxLabel = (address) => mail.BOXES.find((b) => b.address === address)?.label || 'Other';
-  const ICONS = { all: 'inbox', support: 'headphone-mic', privacy: 'shield', alerts: 'bell', other: 'folder' };
-  const reading = !!opened || !!compose;
+  // Where else to look when a search finds nothing: Inbox or Sent, whichever this isn't, then the other mailboxes
+  const elsewhere = [
+    ...folders.filter((f) => folder.direction && f.direction && f.key !== folder.key).map((f) => ({ label: f.label, box, folder: f })),
+    ...mail.BOXES.filter((b) => b.key !== box.key).map((b) => ({ label: b.label, box: b, folder })),
+  ];
+  const hint = mail.filterHint(filters);
+  const ICONS = { inbox: 'inbox', sent: 'send', starred: 'star', drafts: 'file', trash: 'trash' };
   const openId = opened ? String(opened.thread._id) : null;
+  // What the form is writing, for what depends on it: shown by the script as it fills the form in
+  const mode = form.forwarding ? 'forward' : form.answering ? 'reply' : 'new';
+  const when = (m) => `data-when="${m}"${m === mode ? '' : ' hidden'}`;
+  // What it goes out from: in a mailbox, that mailbox, shown and not chosen, so no one writes as Privacy from Support's.
+  // Other has no address of its own, so there it's chosen.
+  const fixedSender = mailboxes.find((m) => m.address === box.address);
+  const sender = fixedSender ? fixedSender.address : form.from;
 %>
 <%# What the server has to say (sent, new mail, a failed check): toasts, like the app's (public/js/flash.js) %>
 <% toasts.forEach((note) => { %>
 <template data-flash="<%= note.kind %>"><%= note.text %></template>
 <% }) %>
 
-<div class="flex h-full flex-col md:grid md:grid-cols-[20rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[14rem_22rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+<div id="mail-columns" data-writing="<%= filled %>" class="flex h-full flex-col md:grid md:grid-cols-[20rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[16rem_22rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[16rem_19rem_minmax(0,1fr)_clamp(22rem,26vw,36rem)]">
 
-  <!-- The mailboxes: a row that scrolls sideways, a column from lg -->
-  <aside class="<%= reading ? 'hidden md:flex' : 'flex' %> shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-200 bg-surface px-3 py-2 md:col-span-2 lg:col-span-1 lg:flex-col lg:items-stretch lg:overflow-x-visible lg:overflow-y-auto lg:border-r lg:border-b-0 lg:py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-    <a href="<%= href({ compose: '1' }) %>" class="btn-primary shrink-0 py-2" title="New email">
-      <iconify-icon icon="boxicons:edit" width="18" height="18" aria-hidden="true"></iconify-icon>
-      <span class="sr-only lg:not-sr-only">New email</span>
-    </a>
-    <p class="mt-4 hidden px-2.5 text-sm text-zinc-500 lg:block">Mailboxes</p>
-    <nav aria-label="Mailboxes" class="flex gap-1 lg:mt-1 lg:flex-col">
-      <% boxes.forEach((b) => { %>
-      <a href="/mail?box=<%= b.key %>" <% if (b.key === box.key) { %>aria-current="page"<% } %> class="flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-base text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 aria-[current=page]:bg-zinc-100 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900">
-        <iconify-icon icon="boxicons:<%= ICONS[b.key] || 'envelope' %>" width="18" height="18" aria-hidden="true"></iconify-icon>
-        <span class="lg:flex-1"><%= b.label %></span>
-        <% if (counts[b.key]) { %><span class="rounded-full bg-brand px-1.5 text-xs font-semibold text-on-brand"><%= counts[b.key] %><span class="sr-only"> unread</span></span><% } %>
+  <!-- The mailbox and its folders: on a phone, the mailbox and New email always in full and the folders in a row of their own that
+       scrolls sideways; on a tablet, one row that does; a column from lg. Relative: what's only for screen readers scrolls
+       with the row, or far along it would make the whole page wider. -->
+  <aside id="mail-folders" class="<%= opened ? 'hidden md:flex' : 'flex' %> relative shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-200 bg-surface px-3 py-2 max-md:flex-col max-md:items-stretch max-md:overflow-x-visible md:col-span-2 lg:col-span-1 lg:flex-col lg:items-stretch lg:overflow-x-visible lg:overflow-y-auto lg:border-r lg:border-b-0 lg:py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <%# Kept together, as a new email goes out from this mailbox %>
+    <div id="mail-sender" class="flex shrink-0 items-center gap-1 lg:flex-col lg:items-stretch lg:gap-3">
+      <%- include('partials/mailbox-menu') %>
+      <a href="<%= href({ compose: '1' }) %>" data-draft="<%= JSON.stringify(drafts.new) %>" class="btn-primary shrink-0 py-2">New email</a>
+    </div>
+    <nav aria-label="Folders" class="relative flex gap-1 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden lg:mt-4 lg:flex-col">
+      <% folders.forEach((f) => { const unreadHere = f.direction === 'in' ? counts[box.key] : 0; %>
+      <a href="/mail?<%= new URLSearchParams({ box: box.key, ...inFolder(f) }) %>" <% if (f.key === folder.key) { %>aria-current="page"<% } %> class="flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-base text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 aria-[current=page]:bg-zinc-100 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900">
+        <iconify-icon icon="boxicons:<%= ICONS[f.key] %>" width="18" height="18" aria-hidden="true"></iconify-icon>
+        <span class="lg:flex-1"><%= f.label %></span>
+        <% if (f.drafts && counts.drafts) { %><span class="rounded-full bg-zinc-200 px-1.5 text-xs font-semibold text-zinc-700"><%= counts.drafts %><span class="sr-only"> saved</span></span><% } else if (unreadHere) { %><span class="rounded-full bg-brand px-1.5 text-xs font-semibold text-on-brand"><%= unreadHere %><span class="sr-only"> unread</span></span><% } %>
       </a>
       <% }) %>
     </nav>
   </aside>
 
-  <!-- A mailbox's threads, latest first -->
-  <section aria-label="<%= box.label %>" class="<%= reading ? 'hidden md:flex' : 'flex' %> min-h-0 flex-1 flex-col border-zinc-200 md:border-r">
-    <div class="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-zinc-200 bg-surface px-4">
-      <div class="min-w-0">
-        <h1 class="truncate text-xl font-semibold tracking-tight"><%= box.label %></h1>
-        <% if (q) { %><p class="truncate text-sm text-zinc-500" title="Results for “<%= q %>”">Results for “<%= q %>”</p><% } else if (box.address) { %><p class="truncate text-sm text-zinc-500"><%= box.address %></p><% } %>
+  <!-- A folder's threads, latest first -->
+  <section id="mail-threads" aria-label="<%= folder.label %>" class="<%= opened ? 'hidden md:flex' : 'flex' %> min-h-0 flex-1 flex-col border-zinc-200 md:border-r">
+    <%# Which mailbox and folder this is, the sidebar says. What it's narrowed to, the search field says; on a screen too narrow to fit it there, this does. With a filter on, it always says how many that found: the list only holds a page of them. %>
+    <h1 class="sr-only"><%= box.label %>: <%= folder.label %></h1>
+    <% if (folder.drafts || q || hint) { const counted = !folder.drafts && list.total != null; %>
+    <div class="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 bg-surface px-4 py-2 <%= folder.drafts || counted ? '' : 'lg:hidden' %>">
+      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <% if (folder.drafts) { %><p class="truncate text-sm text-zinc-500">Only you can see yours</p><% } else { %>
+        <% if (counted) { %><p class="shrink-0 text-sm text-zinc-500"><%= list.total %> result<%= list.total === 1 ? '' : 's' %> from <%= q ? 'search and ' : '' %>filters</p><% } %>
+        <% if (q && !hint) { %><p class="min-w-0 truncate text-sm text-zinc-500" title="Results for “<%= q %>”">Results for “<%= q %>”</p><% } %>
+        <% if (hint) { %><%- include('partials/mail-filter-hint', { hint, className: 'flex lg:hidden' }) %><% } %>
+        <% } %>
       </div>
-      <a href="/mail?<%= new URLSearchParams({ box: box.key, ...(q ? { q } : {}), ...(unreadOnly ? {} : { unread: '1' }), ...(opened ? { t: openId } : {}) }) %>" class="shrink-0 text-sm font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= unreadOnly ? 'Show all' : 'Unread only' %></a>
     </div>
-    <div id="mail-list" data-place="<%= box.key %>|<%= q %>|<%= unreadOnly %>|<%= before ? before.toISOString() : '' %>" class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
-      <% if (!list.threads.length && q) { %>
-      <div class="px-4 py-10 text-center text-zinc-500">
-        <p class="break-words">Nothing <%= unreadOnly ? 'unread ' : '' %>in <%= box.label %> matches “<%= q %>”.</p>
-        <% if (box.key !== 'all') { %><a href="/mail?<%= new URLSearchParams({ box: 'all', q }) %>" class="mt-2 inline-block font-medium text-cerise-600 hover:text-cerise-700 hover:underline">Search all mail</a><% } %>
-      </div>
-      <% } else if (!list.threads.length) { %>
-      <p class="px-4 py-10 text-center text-zinc-500"><%= unreadOnly ? 'Nothing unread here.' : 'No mail here yet.' %></p>
-      <% } else { %>
+    <% } %>
+    <div id="mail-list" data-place="<%= new URLSearchParams(listParams) %>" class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+      <% if (folder.drafts && !savedDrafts.length) { %>
+      <p class="px-4 py-10 text-center text-zinc-500">No drafts. Save one from the form to finish it later.</p>
+      <% } else if (folder.drafts) { %>
       <ul class="divide-y divide-zinc-200">
-        <% list.threads.forEach((t) => { const current = String(t._id) === openId; const unread = t.unread > 0 && !current; %>
+        <% savedDrafts.forEach((d) => { const current = String(d._id) === form.d; const home = mail.BOXES.find((b) => b.address === d.from) || box; %>
         <li>
-          <a href="<%= href({ t: String(t._id) }) %>" <% if (current) { %>aria-current="true"<% } %> class="flex gap-3 px-4 py-3 -outline-offset-2 hover:bg-zinc-100 aria-[current=true]:bg-zinc-200/70 <%= unread ? 'bg-surface' : '' %>">
-            <span class="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold <%= current ? 'bg-surface text-zinc-700' : 'bg-zinc-200/70 text-zinc-600' %>" aria-hidden="true"><%= initials(t.counterpart) %></span>
+          <%# It opens at the mailbox it's from: Drafts holds the admin's own, from any of them %>
+          <a href="/mail?<%= new URLSearchParams({ box: home.key, ...inFolder(folder), d: String(d._id) }) %>" data-open-draft="<%= d._id %>" data-box="<%= home.key %>" data-box-label="<%= home.label %>" <% if (current) { %>aria-current="true"<% } %> class="flex gap-3 px-4 py-3 -outline-offset-2 hover:bg-zinc-100 aria-[current=true]:bg-zinc-200/70">
+            <span class="flex size-9 shrink-0 items-center justify-center rounded-full <%= current ? 'bg-surface text-zinc-700' : 'bg-zinc-200/70 text-zinc-600' %>" aria-hidden="true"><iconify-icon icon="boxicons:file" width="18" height="18"></iconify-icon></span>
             <span class="min-w-0 flex-1">
               <span class="flex items-baseline justify-between gap-3">
-                <span class="truncate <%= unread ? 'font-semibold text-zinc-900' : 'font-medium text-zinc-800' %>"><%= who(t.counterpart) %><% if (t.messages > 1) { %> <span class="font-normal text-zinc-500"><%= t.messages %></span><% } %></span>
-                <time datetime="<%= new Date(t.lastAt).toISOString() %>" class="shrink-0 text-sm text-zinc-500"><%= mail.shortDate(t.lastAt) %></time>
+                <span class="truncate font-medium text-zinc-800"><%= d.to || 'No recipient yet' %></span>
+                <time datetime="<%= new Date(d.updatedAt).toISOString() %>" class="shrink-0 text-sm text-zinc-500"><%= mail.shortDate(d.updatedAt) %></time>
+              </span>
+              <span class="block truncate text-zinc-700"><%= d.subject || '(no subject)' %></span>
+              <span class="block truncate text-sm text-zinc-500"><%= d.text || 'No message yet' %><% if (d.files?.length) { %> · <%= d.files.length %> file<%= d.files.length === 1 ? '' : 's' %><% } %></span>
+            </span>
+          </a>
+        </li>
+        <% }) %>
+      </ul>
+      <% } else if (!list.threads.length && q) { %>
+      <div class="px-4 py-10 text-center text-zinc-500">
+        <p class="break-words">Nothing <%= filters.unreadOnly ? 'unread ' : '' %>in <%= folder.label %> matches “<%= q %>”.</p>
+        <p class="mt-2">Try <% elsewhere.forEach((place, i) => { %><%= i ? ' · ' : '' %><a href="/mail?<%= new URLSearchParams({ box: place.box.key, ...inFolder(place.folder), q, ...mail.filterParams(filters) }) %>" class="font-medium text-cerise-600 hover:text-cerise-700 hover:underline"><%= place.label %></a><% }) %></p>
+      </div>
+      <% } else if (!list.threads.length) { %>
+      <p class="px-4 py-10 text-center text-zinc-500"><%= mail.countFilters(filters) ? 'No mail matches these filters.' : 'No mail here yet.' %></p>
+      <% } else { %>
+      <ul class="divide-y divide-zinc-200">
+        <% list.threads.forEach((t) => { const current = String(t._id) === openId; const unread = t.unread > 0 && !current; const sent = t.lastDirection === 'out'; %>
+        <li>
+          <%# New and unread stand out in the brand's color: a tinted row with an edge, its avatar and tag solid, its name and subject in color. Sent or received goes by its latest email: a conversation can hold both. %>
+          <a href="<%= href({ t: String(t._id) }) %>" <% if (current) { %>aria-current="true"<% } %> class="flex gap-3 border-l-[3px] py-3 pr-4 pl-[13px] -outline-offset-2 aria-[current=true]:bg-zinc-200/70 <%= unread ? 'border-l-brand bg-cerise-50/50 hover:bg-cerise-50' : 'border-l-transparent hover:bg-zinc-100' %>">
+            <span class="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold <%= unread ? 'bg-brand text-on-brand' : current ? 'bg-surface text-zinc-700' : 'bg-zinc-200/70 text-zinc-600' %>" aria-hidden="true"><%= initials(t.counterpart) %></span>
+            <span class="min-w-0 flex-1">
+              <span class="flex items-baseline justify-between gap-3">
+                <span class="truncate <%= unread ? 'font-semibold text-cerise-700' : 'font-medium text-zinc-800' %>"><% if (sent) { %><span class="font-normal text-zinc-500">To </span><% } %><%= who(t.counterpart) %><% if (t.messages > 1) { %> <span class="font-normal <%= unread ? 'text-cerise-600' : 'text-zinc-500' %>"><%= t.messages %></span><% } %></span>
+                <time datetime="<%= new Date(t.lastAt).toISOString() %>" class="shrink-0 text-sm <%= unread ? 'font-medium text-cerise-700' : 'text-zinc-500' %>"><%= mail.shortDate(t.lastAt) %></time>
               </span>
               <span class="flex items-center justify-between gap-3">
-                <span class="truncate <%= unread ? 'font-medium text-zinc-900' : 'text-zinc-700' %>"><%= t.subject || '(no subject)' %></span>
-                <% if (unread) { %><span class="shrink-0 rounded-sm bg-cerise-50 px-1.5 text-xs font-medium text-cerise-700">New</span><% } %>
+                <span class="truncate <%= unread ? 'font-semibold text-cerise-700' : 'text-zinc-700' %>"><%= t.subject || '(no subject)' %></span>
+                <span class="flex shrink-0 items-center gap-1.5">
+                  <% if (t.starred) { %><iconify-icon icon="boxicons:star-filled" width="14" height="14" class="text-amber-500" role="img" aria-label="Starred"></iconify-icon><% } %>
+                  <% if (unread) { %><span class="rounded-sm bg-brand px-1.5 text-xs font-semibold text-on-brand">New</span><% } %>
+                </span>
               </span>
-              <span class="block truncate text-sm text-zinc-500"><% if (box.key === 'all') { %><span class="font-medium text-zinc-600"><%= mailboxLabel(t.mailbox) %></span> · <% } %><% if (t.lastDirection === 'out') { %>You: <% } %><%= t.snippet %></span>
+              <span class="block truncate text-sm text-zinc-500"><span class="font-medium text-zinc-600"><iconify-icon icon="boxicons:<%= sent ? 'arrow-up-right' : 'arrow-down-left' %>" width="14" height="14" class="align-[-3px]" aria-hidden="true"></iconify-icon> <%= sent ? 'Sent' : 'Received' %></span> · <%= t.snippet %></span>
             </span>
           </a>
         </li>
@@ -91,30 +138,18 @@
     </div>
   </section>
 
-  <!-- The thread open, or a new email -->
-  <section aria-label="<%= opened ? 'Email' : compose ? 'New email' : 'No email open' %>" class="<%= reading ? 'flex' : 'hidden md:flex' %> min-h-0 min-w-0 flex-1 flex-col bg-surface">
-  <% if (reading) { %>
-    <div class="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-zinc-200 px-2 md:h-16 sm:px-4">
-      <div class="flex min-w-0 items-center gap-1">
-        <a href="<%= href() %>" class="icon-btn md:hidden" aria-label="Back to <%= box.label %>" title="Back to <%= box.label %>">
-          <iconify-icon icon="boxicons:arrow-left" width="20" height="20" aria-hidden="true"></iconify-icon>
-        </a>
-        <% if (opened && opened.messages.some((m) => m.direction === 'in')) { %>
-        <form method="post" action="/mail/threads/<%= openId %>/unread">
-          <input type="hidden" name="box" value="<%= box.key %>">
-          <% if (q) { %><input type="hidden" name="q" value="<%= q %>"><% } %>
-          <button type="submit" class="btn-ghost">
-            <iconify-icon icon="boxicons:envelope" width="18" height="18" aria-hidden="true"></iconify-icon>
-            <span>Mark unread</span>
-          </button>
-        </form>
-        <% } %>
-      </div>
-      <% if (opened) { %><span class="truncate text-sm text-zinc-500"><%= opened.thread.mailbox || 'Other' %></span><% } %>
+  <!-- The thread open -->
+  <section id="mail-reading" aria-label="<%= opened ? 'Email' : 'No email open' %>" class="<%= opened ? 'flex' : 'hidden md:flex' %> min-h-0 min-w-0 flex-1 flex-col bg-surface">
+  <% if (opened) { %>
+    <%# The way back to the list on a phone. With more room the list is beside the email. %>
+    <div class="flex h-14 shrink-0 items-center border-b border-zinc-200 px-2 sm:px-4 md:hidden">
+      <a href="<%= href() %>" class="icon-btn" aria-label="Back to <%= folder.label %>" title="Back to <%= folder.label %>">
+        <iconify-icon icon="boxicons:arrow-left" width="20" height="20" aria-hidden="true"></iconify-icon>
+      </a>
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto px-4 py-5 [scrollbar-width:thin] sm:px-6">
-      <% if (opened) { const { thread, messages } = opened; const many = messages.length > 1; %>
+      <% const { thread, messages } = opened; const many = messages.length > 1; %>
       <h2 class="text-2xl font-semibold tracking-tight break-words"><%= thread.subject || '(no subject)' %></h2>
       <p class="mt-1 text-sm break-words text-zinc-500">With <%= mail.formatAddress(thread.counterpart || {}) %></p>
 
@@ -128,21 +163,22 @@
         %>
         <li>
           <<%= wrap %> class="group py-5" <% if (many && open) { %>open<% } %>>
-            <<%= top %> class="flex items-start gap-3 <%= many ? 'list-none [&::-webkit-details-marker]:hidden' : '' %>">
+            <%# With too little room for both, the date goes under who it's from, rather than squeezing their address apart %>
+            <<%= top %> class="flex flex-wrap items-start gap-x-3 gap-y-1 <%= many ? 'list-none [&::-webkit-details-marker]:hidden' : '' %>">
               <span class="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold <%= out ? 'bg-cerise-50 text-cerise-700' : 'bg-zinc-100 text-zinc-600' %>" aria-hidden="true"><%= initials(m.from) %></span>
-              <span class="min-w-0 flex-1">
+              <span class="min-w-48 flex-1">
                 <span class="flex flex-wrap items-baseline gap-x-2">
                   <span class="font-semibold break-words text-zinc-900"><%= who(m.from) %></span>
                   <% if (m.from?.name) { %><span class="text-sm break-all text-zinc-500"><%= m.from.address %></span><% } %>
-                  <% if (out) { %><span class="rounded-sm bg-cerise-50 px-1.5 py-0.5 text-xs font-medium text-cerise-700">Sent</span><% } %>
+                  <% if (out) { %><span class="rounded-sm bg-cerise-50 px-1.5 py-0.5 text-xs font-medium text-cerise-700">Sent</span><% } else { %><span class="rounded-sm bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-600">Received</span><% } %>
                 </span>
                 <span class="<%= many ? 'hidden group-open:block' : 'block' %> text-sm break-words text-zinc-500">To <%= (m.to || []).join(', ') %><% if (m.cc?.length) { %> · Cc <%= m.cc.join(', ') %><% } %><% if (m.replyTo?.length) { %> · Reply to <%= m.replyTo.join(', ') %><% } %></span>
                 <% if (many) { %><span class="block truncate text-sm text-zinc-500 group-open:hidden"><%= mail.snippetOf(m) %></span><% } %>
               </span>
-              <span class="flex shrink-0 items-center gap-1">
+              <span class="ml-auto flex shrink-0 items-center gap-1">
                 <time datetime="<%= new Date(m.date).toISOString() %>" class="text-sm text-zinc-500"><%= mail.fullDate(m.date) %></time>
                 <% if (many) { %>
-                <a href="<%= threadHref({ forward: String(m._id) }) %>" class="icon-btn -my-2 -mr-2" aria-label="Forward this email" title="Forward this email">
+                <a href="<%= threadHref({ forward: String(m._id) }) %>" data-draft="<%= JSON.stringify(drafts.forward[String(m._id)]) %>" class="icon-btn -my-2 -mr-2" aria-label="Forward this email" title="Forward this email">
                   <iconify-icon icon="boxicons:forward" width="18" height="18" aria-hidden="true"></iconify-icon>
                 </a>
                 <% } %>
@@ -155,12 +191,16 @@
             </p>
             <% } %>
             <div class="mt-4">
-              <% if (m.html) { %>
+              <% if (m.html && out) { %>
+              <%# As it went out, in the email's design. Our own, cleaned when it was written: no scripts run here either, and the page can measure it, to fit it (admin.js). %>
+              <iframe data-fit sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="Email sent by <%= who(m.from) %>" srcdoc="<%= mail.sentFrameDoc(m.html) %>" class="h-48 w-full rounded-sm border border-zinc-200 bg-white"></iframe>
+              <% } else if (m.html) { %>
               <%# Whatever the sender wrote: no scripts, forms or access to this page (sandbox), only links, opened in a new tab %>
               <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" loading="lazy" title="Email from <%= who(m.from) %>" srcdoc="<%= mail.frameDoc(m.html) %>" class="h-[60dvh] min-h-80 w-full resize-y overflow-auto rounded-sm border border-zinc-200 bg-white"></iframe>
               <p class="mt-1 text-xs text-zinc-500">Images from other sites aren’t loaded.</p>
-              <% } else { %>
-              <div class="whitespace-pre-wrap break-words text-zinc-800"><%= m.text || '' %></div>
+              <% } else { const { written, quote } = mail.splitQuote(m.text || ''); %>
+              <% if (written) { %><div class="whitespace-pre-wrap break-words text-zinc-800"><%= written %></div><% } %>
+              <% if (quote) { %><blockquote class="mt-4 border-l-2 border-zinc-200 pl-3 text-sm whitespace-pre-wrap break-words text-zinc-500 first:mt-0"><%= quote %></blockquote><% } %>
               <% } %>
             </div>
             <% if (m.attachments?.length) { %>
@@ -174,7 +214,7 @@
                   </span>
                   <span class="min-w-0">
                     <span class="block truncate text-sm font-medium text-zinc-800"><%= a.filename || 'Attachment' %></span>
-                    <span class="block text-xs text-zinc-500"><%= size(a.size) %></span>
+                    <span class="block text-xs text-zinc-500"><%= mail.fileSize(a.size) %></span>
                   </span>
                 <% if (out) { %></div><% } else { %></a><% } %>
               </li>
@@ -185,94 +225,35 @@
         </li>
         <% }) %>
       </ol>
-      <% } %>
-
-      <% if (form) { const replying = opened && !forwarding; %>
-      <!-- A reply under the thread, a forward, or a new email. The key makes sending it twice send one email. -->
-      <form id="mail-form" method="post" action="/mail/send#mail-form" data-busy class="scroll-mt-4 space-y-3 <%= opened ? 'rounded-md border border-zinc-200 p-4' : '' %>">
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-semibold"><%= forwarding ? 'Forward' : replying ? 'Reply' : 'New email' %></h2>
-          <a href="<%= opened ? threadHref() : href() %>" class="icon-btn -my-1.5 -mr-2" aria-label="Discard" title="Discard">
-            <iconify-icon icon="boxicons:x" width="20" height="20" aria-hidden="true"></iconify-icon>
-          </a>
-        </div>
-        <% if (formError) { %>
-        <p role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"><%= formError %></p>
-        <% } %>
-        <input type="hidden" name="box" value="<%= box.key %>">
-        <% if (q) { %><input type="hidden" name="q" value="<%= q %>"><% } %>
-        <input type="hidden" name="key" value="<%= form.key %>">
-        <% if (opened) { %>
-        <input type="hidden" name="t" value="<%= openId %>">
-        <% if (forwarding) { %>
-        <input type="hidden" name="forwarding" value="<%= form.forwarding %>">
-        <% } else { %>
-        <input type="hidden" name="answering" value="<%= form.answering %>">
-        <% } %>
-        <% } %>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="block">
-            <span class="label">From</span>
-            <select name="from" class="field mt-1">
-              <% mailboxes.forEach((m) => { %>
-              <option value="<%= m.address %>" <% if (m.address === form.from) { %>selected<% } %>><%= m.name %> &lt;<%= m.address %>&gt;</option>
-              <% }) %>
-            </select>
-          </label>
-          <label class="block">
-            <span class="label">To</span>
-            <input type="text" name="to" value="<%= form.to || '' %>" required <% if (!replying && !formError) { %>autofocus<% } %> autocomplete="off" spellcheck="false" placeholder="name@example.com" class="field mt-1">
-          </label>
-        </div>
-        <label class="block">
-          <span class="label">Cc <span class="font-normal text-zinc-500">(optional)</span></span>
-          <input type="text" name="cc" value="<%= form.cc || '' %>" autocomplete="off" spellcheck="false" placeholder="Separate addresses with commas" class="field mt-1">
-        </label>
-        <label class="block">
-          <span class="label">Subject</span>
-          <input type="text" name="subject" value="<%= form.subject || '' %>" required maxlength="300" class="field mt-1">
-        </label>
-        <label class="block">
-          <span class="label">Message<% if (forwarding) { %> <span class="font-normal text-zinc-500">(optional)</span><% } %></span>
-          <textarea name="body" rows="<%= opened ? 6 : 12 %>" <% if (!forwarding) { %>required<% } %> <% if (replying && !formError) { %>autofocus<% } %> maxlength="<%= bodyMax %>" class="field mt-1 resize-y"><%= form.body || '' %></textarea>
-        </label>
-        <% if (forwarding?.attachments?.some((a) => a.id)) { %>
-        <fieldset>
-          <legend class="label">Attachments to send along</legend>
-          <div class="mt-1 space-y-1">
-            <% forwarding.attachments.filter((a) => a.id).forEach((a) => { %>
-            <label class="flex cursor-pointer items-center gap-2 text-base text-zinc-700">
-              <input type="checkbox" name="attachments" value="<%= a.id %>" <% if ((form.attachments || []).includes(a.id)) { %>checked<% } %> class="size-4 shrink-0 accent-brand">
-              <span class="truncate"><%= a.filename || 'Attachment' %></span>
-              <span class="shrink-0 text-sm text-zinc-500"><%= size(a.size) %></span>
-            </label>
-            <% }) %>
-          </div>
-        </fieldset>
-        <% } %>
-        <% if (opened) { %>
-        <p class="text-sm text-zinc-500"><%= forwarding ? 'The email you’re forwarding goes under your message, as plain text.' : 'The email you’re answering is quoted under your message.' %></p>
-        <% } %>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-primary">
-            <iconify-icon icon="boxicons:send" width="18" height="18" aria-hidden="true"></iconify-icon>
-            <span>Send</span>
-          </button>
-        </div>
-      </form>
-      <% } %>
     </div>
 
-    <% if (opened && !form && opened.messages.length) { %>
-    <div class="flex shrink-0 gap-2 border-t border-zinc-200 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-      <a href="<%= threadHref({ reply: '1' }) %>" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700">
-        <iconify-icon icon="boxicons:reply" width="18" height="18" aria-hidden="true"></iconify-icon>
-        <span>Reply</span>
-      </a>
-      <a href="<%= threadHref({ forward: String(opened.messages.at(-1)._id) }) %>" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700">
-        <iconify-icon icon="boxicons:forward" width="18" height="18" aria-hidden="true"></iconify-icon>
-        <span>Forward</span>
-      </a>
+    <% if (drafts.reply) { %>
+    <%# Two sets: answering it on the left; on the right the emails either side of it, and between them what can be done to it %>
+    <div class="flex shrink-0 flex-wrap items-center gap-2 border-t border-zinc-200 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+      <div class="flex gap-2">
+        <a href="<%= threadHref({ reply: '1' }) %>" data-draft="<%= JSON.stringify(drafts.reply) %>" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700">
+          <iconify-icon icon="boxicons:reply" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span>Reply</span>
+        </a>
+        <a href="<%= threadHref({ forward: String(messages.at(-1)._id) }) %>" data-draft="<%= JSON.stringify(drafts.forward[String(messages.at(-1)._id)]) %>" class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700">
+          <iconify-icon icon="boxicons:forward" width="18" height="18" aria-hidden="true"></iconify-icon>
+          <span>Forward</span>
+        </a>
+      </div>
+      <div class="ml-auto flex items-center gap-0.5">
+        <%- include('partials/mail-step', { to: stepTo(around.newer, around.newer && new Date(around.newer.lastAt).getTime() + 1), icon: 'chevron-left', label: 'Previous email' }) %>
+        <%- include('partials/mail-thread-action', { id: openId, action: 'unread', fields: listParams, icon: 'envelope', label: 'Mark unread', off: !messages.some((m) => m.direction === 'in') }) %>
+        <a href="/mail/threads/<%= openId %>/print" target="_blank" rel="noopener" class="icon-btn" aria-label="Print" title="Print">
+          <iconify-icon icon="boxicons:printer" width="18" height="18" aria-hidden="true"></iconify-icon>
+        </a>
+        <%- include('partials/mail-thread-action', { id: openId, action: 'star', fields: { ...listParams, on: thread.starred ? '0' : '1' }, icon: thread.starred ? 'star-filled' : 'star', label: 'Star', pressed: !!thread.starred, tone: thread.starred ? 'text-amber-500' : 'hover:text-amber-500' }) %>
+        <% if (thread.trashedAt) { %>
+        <%- include('partials/mail-thread-action', { id: openId, action: 'restore', fields: listParams, icon: 'undo', label: 'Restore' }) %>
+        <% } else { %>
+        <%- include('partials/mail-thread-action', { id: openId, action: 'trash', fields: listParams, icon: 'trash', label: 'Delete', tone: 'hover:text-red-600' }) %>
+        <% } %>
+        <%- include('partials/mail-step', { to: stepTo(around.older, thread.lastAt), icon: 'chevron-right', label: 'Next email' }) %>
+      </div>
     </div>
     <% } %>
   <% } else { %>
@@ -281,6 +262,167 @@
       <p>Choose an email to read it here.</p>
     </div>
   <% } %>
+  </section>
+
+  <!-- The form to write in. The key makes sending it twice send one email. -->
+  <section id="mail-writing" aria-label="Write an email" class="flex min-h-0 min-w-0 flex-1 flex-col border-zinc-200 bg-surface xl:border-l">
+    <form id="mail-form" method="post" action="/mail/send#mail-form" enctype="multipart/form-data" data-busy data-filled="<%= filled %>" data-choices="<%= JSON.stringify(form.choices || []) %>" data-max-files="<%= filesMax %>" data-max-bytes="<%= filesMaxBytes %>" data-signatures="<%= JSON.stringify(signatures) %>" data-saved-files="<%= JSON.stringify(form.savedFiles || []) %>" class="flex min-h-0 flex-1 flex-col">
+      <div class="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-zinc-200 px-2 py-1.5 md:min-h-16 sm:px-4">
+        <div class="flex min-w-0 items-center gap-1">
+          <a href="<%= opened ? threadHref() : href() %>" data-draft-close class="icon-btn xl:hidden" aria-label="Back" title="Back">
+            <iconify-icon icon="boxicons:arrow-left" width="20" height="20" aria-hidden="true"></iconify-icon>
+          </a>
+          <div class="min-w-0">
+            <h2 class="truncate text-xl font-semibold tracking-tight">
+              <span <%- when('new') %>>New email</span>
+              <span <%- when('reply') %>>Reply</span>
+              <span <%- when('forward') %>>Forward</span>
+            </h2>
+            <p <%- when('reply') %> class="text-sm text-zinc-500">The email you’re answering is quoted under your message.</p>
+            <p <%- when('forward') %> class="text-sm text-zinc-500">The email you’re forwarding goes under your message.</p>
+          </div>
+        </div>
+        <a href="<%= opened ? threadHref() : href() %>" data-draft-discard class="icon-btn -mr-1.5" aria-label="Discard" title="Discard">
+          <iconify-icon icon="boxicons:x" width="20" height="20" aria-hidden="true"></iconify-icon>
+        </a>
+      </div>
+
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 [scrollbar-width:thin]">
+        <% if (formError) { %>
+        <p role="alert" class="rounded-md bg-red-50 px-3 py-2 text-base text-red-800"><%= formError %></p>
+        <% } %>
+        <input type="hidden" name="box" value="<%= box.key %>">
+        <input type="hidden" name="folder" value="<%= folder.key %>">
+        <% Object.entries(mail.filterParams(filters)).forEach(([name, value]) => { %><input type="hidden" name="<%= name %>" value="<%= value %>"><% }) %>
+        <% if (q) { %><input type="hidden" name="q" value="<%= q %>"><% } %>
+        <input type="hidden" name="key" value="<%= form.key %>">
+        <input type="hidden" name="t" value="<%= form.t || '' %>">
+        <input type="hidden" name="answering" value="<%= form.answering || '' %>">
+        <input type="hidden" name="forwarding" value="<%= form.forwarding || '' %>">
+        <input type="hidden" name="d" value="<%= form.d || '' %>">
+        <%# Who it goes out from and the signature that adds, side by side. In Other the address is a field like the ones under it, so it has the row to itself. -mb-px: the column's gap and the space over the letters of To come to a pixel more than the gap above the boxes. %>
+        <div class="-mb-px grid gap-2 <%= fixedSender ? 'grid-cols-2' : '' %>">
+        <div class="min-w-0 <%= fixedSender ? 'rounded-md border border-zinc-200 px-3 py-2' : '' %>">
+          <% if (fixedSender) { %>
+          <%# In the look of the mailbox menu (partials/mailbox-menu.ejs) %>
+          <span class="block text-sm text-zinc-500">From</span>
+          <input type="hidden" name="from" value="<%= sender %>">
+          <div class="mt-1 flex min-w-0 items-center gap-2">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-200/70 text-zinc-600" aria-hidden="true">
+              <iconify-icon icon="boxicons:<%= fixedSender.icon %>" width="18" height="18"></iconify-icon>
+            </span>
+            <span class="min-w-0">
+              <span title="<%= fixedSender.name %>" class="block truncate font-medium text-zinc-900"><%= fixedSender.name %></span>
+              <span title="<%= fixedSender.address %>" class="block truncate text-sm text-zinc-500"><%= fixedSender.address %></span>
+            </span>
+          </div>
+          <% } else { %>
+          <label for="mail-from" class="label">From</label>
+          <%# Custom dropdown (customSelect() in public/js/select.js) over this select, which it hides and keeps as the value. The data- attributes give each address the look of the mailbox menu (partials/mailbox-menu.ejs). %>
+          <div class="mt-1">
+            <select id="mail-from" name="from" class="field">
+              <option value="" hidden <% if (!form.from) { %>selected<% } %>>Choose an address</option>
+              <% mailboxes.forEach((m) => { %>
+              <option value="<%= m.address %>" <% if (m.address === form.from) { %>selected<% } %> data-icon="<%= m.icon %>" data-title="<%= m.name %>" data-detail="<%= m.address %>"><%= m.name %> &lt;<%= m.address %>&gt;</option>
+              <% }) %>
+            </select>
+          </div>
+          <% } %>
+        </div>
+        <%# Shown once there's an address, in two lines like the name and address beside it: all of it is in its title, and on its page. The link's ::after is what a finger gets to press. %>
+        <div id="mail-signature" <% if (!sender) { %>hidden<% } %> class="min-w-0 rounded-md border border-zinc-200 px-3 py-2">
+          <span class="block text-sm text-zinc-500">Signature</span>
+          <div class="mt-1">
+            <p data-signature title="<%= signatures[sender] || 'None' %>" class="truncate font-medium text-zinc-900"><%= signatures[sender] || 'None' %></p>
+            <a href="/mail/signatures" aria-label="Edit signature" class="relative flex w-fit items-center gap-1 text-sm text-zinc-500 after:absolute after:-inset-2 hover:text-zinc-900 hover:underline">
+              <iconify-icon icon="boxicons:edit" width="14" height="14" aria-hidden="true"></iconify-icon>
+              <span>Edit</span>
+            </a>
+          </div>
+        </div>
+        </div>
+        <label class="block">
+          <span class="label">To</span>
+          <input type="text" name="to" value="<%= form.to || '' %>" required <% if (filled && !formError && !form.to) { %>autofocus<% } %> autocomplete="off" spellcheck="false" placeholder="name@example.com" class="field mt-1">
+        </label>
+        <label class="block">
+          <span class="label">Cc <span class="font-normal text-zinc-500">(optional)</span></span>
+          <input type="text" name="cc" value="<%= form.cc || '' %>" autocomplete="off" spellcheck="false" placeholder="Separate addresses with commas" class="field mt-1">
+        </label>
+        <label class="block">
+          <span class="label">Subject</span>
+          <input type="text" name="subject" value="<%= form.subject || '' %>" required maxlength="300" class="field mt-1">
+        </label>
+        <div class="flex min-h-44 flex-1 flex-col">
+          <span id="mail-body-label" class="label">Message <span <%- when('forward') %> class="font-normal text-zinc-500">(optional)</span></span>
+          <%# What's sent: the script hides it and keeps the editor's HTML in it (public/js/mail-editor.js). Without the script: plain text, in the email's design all the same. %>
+          <input type="hidden" name="format" value="text">
+          <textarea name="body" <% if (mode !== 'forward') { %>required<% } %> aria-labelledby="mail-body-label" class="field mt-1 flex-1 resize-none"><%= form.body || '' %></textarea>
+          <div id="mail-editor-box" hidden class="mt-1 flex min-h-0 flex-1 flex-col rounded-md border border-zinc-300 bg-surface focus-within:border-cerise-500 focus-within:ring-2 focus-within:ring-cerise-100">
+            <div id="mail-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="mail-body-label" class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-base break-words text-zinc-900 outline-none [scrollbar-width:thin] [&_a]:text-cerise-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"></div>
+            <%# The files attached (public/js/mail-attachments.js): one row that scrolls sideways, however many there are, so they leave the message its height %>
+            <ul id="mail-files" aria-label="Attached files" hidden class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-zinc-200 p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"></ul>
+            <template id="mail-file">
+              <li class="flex shrink-0 items-center gap-2 rounded-md border border-zinc-200 p-1">
+                <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-200/70 text-zinc-600" aria-hidden="true">
+                  <iconify-icon icon="boxicons:paperclip" width="18" height="18"></iconify-icon>
+                </span>
+                <span>
+                  <span data-name class="block text-sm font-medium whitespace-nowrap text-zinc-800"></span>
+                  <span data-size class="block text-xs text-zinc-500"></span>
+                </span>
+                <button type="button" class="icon-btn size-8 pointer-coarse:size-11" aria-label="Remove this file" title="Remove this file">
+                  <iconify-icon icon="boxicons:x" width="18" height="18" aria-hidden="true"></iconify-icon>
+                </button>
+              </li>
+            </template>
+            <div data-link-row hidden class="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-zinc-200 p-1.5">
+              <input type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste or type a link" aria-label="Link address" class="field min-w-40 flex-1 py-1">
+              <button type="button" data-link-apply class="btn-primary px-3 py-1">Apply</button>
+              <button type="button" data-link-remove hidden class="btn-ghost border border-zinc-200 px-3 py-1 font-medium text-zinc-700">Remove</button>
+              <button type="button" data-link-cancel class="icon-btn size-8 pointer-coarse:size-10" aria-label="Cancel" title="Cancel">
+                <iconify-icon icon="boxicons:x" width="18" height="18" aria-hidden="true"></iconify-icon>
+              </button>
+            </div>
+            <div role="toolbar" aria-label="Formatting and attachments" class="flex shrink-0 items-center gap-0.5 border-t border-zinc-200 p-1">
+              <% [['bold', 'bold', 'Bold (Ctrl+B)'], ['italic', 'italic', 'Italic (Ctrl+I)'], ['insertUnorderedList', 'list-ul', 'Bulleted list'], ['insertOrderedList', 'list-ol', 'Numbered list']].forEach(([command, icon, label]) => { %>
+              <button type="button" data-format="<%= command %>" aria-pressed="false" class="icon-btn size-8 pointer-coarse:size-10 aria-pressed:bg-zinc-200 aria-pressed:text-zinc-900" aria-label="<%= label %>" title="<%= label %>">
+                <iconify-icon icon="boxicons:<%= icon %>" width="18" height="18" aria-hidden="true"></iconify-icon>
+              </button>
+              <% }) %>
+              <button type="button" data-link aria-pressed="false" class="icon-btn size-8 pointer-coarse:size-10 aria-pressed:bg-zinc-200 aria-pressed:text-zinc-900" aria-label="Link" title="Link">
+                <iconify-icon icon="boxicons:link" width="18" height="18" aria-hidden="true"></iconify-icon>
+              </button>
+              <button type="button" id="mail-attach" class="icon-btn size-8 pointer-coarse:size-10" aria-label="Attach files" title="Attach files: up to <%= filesMax %>, <%= Math.floor(filesMaxBytes / 1024 / 1024) %> MB in all. You can also drop them here.">
+                <iconify-icon icon="boxicons:paperclip" width="18" height="18" aria-hidden="true"></iconify-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+        <fieldset <% if (!form.choices?.length) { %>hidden<% } %>>
+          <legend class="label">Attachments to send along</legend>
+          <div id="mail-attachment-choices" class="mt-1 space-y-1">
+            <% (form.choices || []).forEach((choice) => { %>
+            <%- include('partials/mail-attachment-choice', { choice, checked: (form.attachments || []).includes(choice.id) }) %>
+            <% }) %>
+          </div>
+          <template id="mail-attachment-choice"><%- include('partials/mail-attachment-choice', { choice: { id: '', filename: '', size: '' }, checked: false }) %></template>
+        </fieldset>
+        <%# The script hides this and the paperclip opens it. After every other field: a file past the limits stops the form being read, and what's before it is still there to send back. %>
+        <input id="mail-file-input" type="file" name="files" multiple class="text-sm text-zinc-600">
+      </div>
+
+      <div class="flex shrink-0 flex-wrap items-center gap-2 border-t border-zinc-200 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <button type="submit" data-save formaction="/mail/drafts" formnovalidate class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700">Save as draft</button>
+        <div class="ml-auto flex items-center gap-2">
+          <a id="mail-cancel" href="<%= opened ? threadHref() : href() %>" data-draft-discard class="btn-ghost border border-zinc-200 px-3 py-2 font-medium text-zinc-700 data-[asking=true]:border-red-300 data-[asking=true]:text-red-700">Cancel</a>
+          <button type="submit" class="btn-primary border border-transparent py-2">
+            <iconify-icon icon="boxicons:send" width="18" height="18" aria-hidden="true"></iconify-icon>
+            <span>Send</span>
+          </button>
+        </div>
+      </div>
+    </form>
   </section>
 </div>
 <%- include('partials/foot') %>

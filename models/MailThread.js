@@ -14,6 +14,8 @@ const MailThreadSchema = new Schema(
     lastDirection: String, // 'in' or 'out': who wrote last
     messages: { type: Number, default: 0 },
     unread: { type: Number, default: 0 }, // received messages not opened yet
+    starred: { type: Boolean, default: false }, // for the whole team, like whether it's been read
+    trashedAt: { type: Date, default: null }, // deleted: in Trash since then, until it's restored or written in again
   },
   { collection: 'mail_threads', versionKey: false, timestamps: true }
 );

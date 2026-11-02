@@ -1,0 +1,37 @@
+<%
+  // A thread on a page of its own, to print (the Print button in views/admin/mail.ejs), in the light palette whatever the
+  // admin's theme. Every email in full, by its words rather than its HTML: a frame prints cut off at its own height, and
+  // a received email's frame can't be measured to fit it.
+%>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title><%= thread.subject || '(no subject)' %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=SUSE:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/output.css">
+</head>
+<body class="bg-surface font-sans text-zinc-900 antialiased">
+  <main class="mx-auto max-w-3xl px-6 py-8 print:max-w-none print:p-0">
+    <h1 class="text-2xl font-semibold tracking-tight break-words"><%= thread.subject || '(no subject)' %></h1>
+    <p class="mt-1 text-sm break-words text-zinc-600">With <%= mail.formatAddress(thread.counterpart || {}) %></p>
+    <% messages.forEach((m) => { const { written, quote } = mail.splitQuote(mail.bodyText(m)); %>
+    <article class="mt-6 border-t border-zinc-300 pt-4">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4">
+        <p class="font-semibold break-words"><%= mail.formatAddress(m.from || {}) %></p>
+        <time datetime="<%= new Date(m.date).toISOString() %>" class="text-sm text-zinc-600"><%= mail.fullDate(m.date) %></time>
+      </div>
+      <p class="text-sm break-words text-zinc-600">To <%= (m.to || []).join(', ') %><% if (m.cc?.length) { %> · Cc <%= m.cc.join(', ') %><% } %></p>
+      <% if (written) { %><div class="mt-3 whitespace-pre-wrap break-words"><%= written %></div><% } %>
+      <% if (quote) { %><blockquote class="mt-3 border-l-2 border-zinc-300 pl-3 text-sm whitespace-pre-wrap break-words text-zinc-600"><%= quote %></blockquote><% } %>
+      <% if (m.attachments?.length) { %><p class="mt-3 text-sm break-words text-zinc-600">Attachments: <%= m.attachments.map((a) => a.filename || 'Attachment').join(', ') %></p><% } %>
+    </article>
+    <% }) %>
+  </main>
+  <script src="/js/mail-print.js"></script>
+</body>
+</html>

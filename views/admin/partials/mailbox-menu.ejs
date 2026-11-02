@@ -1,0 +1,37 @@
+<%
+  // Which mailbox the page shows, at the top of the sidebar, right above New email (routes/admin.js). A popover:
+  // the browser closes it on a click outside or Esc, and public/js/admin.js puts it under the button.
+  const { chosen, options, elsewhere } = mailboxMenu;
+%>
+<button type="button" popovertarget="mailbox-menu" title="Choose a mailbox" class="relative flex min-h-11 shrink-0 items-center gap-2 rounded-md py-1 pr-2 pl-1 text-left hover:bg-zinc-100 max-md:min-w-0 max-md:flex-1 max-md:shrink">
+  <span class="flex size-9 shrink-0 items-center justify-center rounded-md bg-zinc-200/70 text-zinc-600" aria-hidden="true">
+    <iconify-icon icon="boxicons:<%= chosen.icon %>" width="18" height="18"></iconify-icon>
+  </span>
+  <span class="min-w-0 flex-1">
+    <span class="sr-only">Mailbox: </span>
+    <span class="block truncate font-medium text-zinc-900"><%= chosen.label %></span>
+    <% if (chosen.address || chosen.note) { %><span class="block truncate text-sm text-zinc-500"><%= chosen.address || chosen.note %></span><% } %>
+  </span>
+  <%# The dot is on the way to the other mailboxes, not on this one: it's their unread mail %>
+  <span class="relative flex shrink-0 text-zinc-500" aria-hidden="true">
+    <iconify-icon icon="boxicons:swap-vertical" width="18" height="18"></iconify-icon>
+    <% if (elsewhere) { %><span class="absolute -top-1.5 -right-2 size-2.5 rounded-full bg-brand ring-2 ring-surface"></span><% } %>
+  </span>
+  <% if (elsewhere) { %><span class="sr-only">, unread mail in other mailboxes</span><% } %>
+</button>
+<div id="mailbox-menu" popover data-menu="left" class="inset-auto m-0 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-zinc-200 bg-surface p-1.5 text-zinc-700 shadow-lg">
+  <nav aria-label="Mailboxes" class="flex flex-col gap-0.5">
+    <% options.forEach((b) => { %>
+    <a href="<%= b.href %>" <% if (b.key === chosen.key) { %>aria-current="true"<% } %> class="flex items-center gap-2.5 rounded-md p-1.5 hover:bg-zinc-100 aria-[current=true]:bg-zinc-100">
+      <span class="flex size-9 shrink-0 items-center justify-center rounded-md bg-zinc-200/70 text-zinc-600" aria-hidden="true">
+        <iconify-icon icon="boxicons:<%= b.icon %>" width="18" height="18"></iconify-icon>
+      </span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate font-medium text-zinc-900"><%= b.label %></span>
+        <% if (b.address || b.note) { %><span class="block truncate text-sm text-zinc-500"><%= b.address || b.note %></span><% } %>
+      </span>
+      <% if (b.unread) { %><span class="shrink-0 rounded-full bg-brand px-1.5 text-xs font-semibold text-on-brand"><%= b.unread %><span class="sr-only"> unread</span></span><% } %>
+    </a>
+    <% }) %>
+  </nav>
+</div>

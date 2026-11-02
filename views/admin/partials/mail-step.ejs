@@ -1,0 +1,10 @@
+<%# To the email before or after the one open, in the list's order; off at either end of it %>
+<% if (to) { %>
+<a href="<%= to %>" class="icon-btn" aria-label="<%= label %>" title="<%= label %>">
+  <iconify-icon icon="boxicons:<%= icon %>" width="20" height="20" aria-hidden="true"></iconify-icon>
+</a>
+<% } else { %>
+<button type="button" disabled class="icon-btn" aria-label="<%= label %>" title="<%= label %>">
+  <iconify-icon icon="boxicons:<%= icon %>" width="20" height="20" aria-hidden="true"></iconify-icon>
+</button>
+<% } %>

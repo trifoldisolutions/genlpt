@@ -50,6 +50,7 @@ const MailMessageSchema = new Schema(
 // A webhook sent twice, or one that crosses a sync, saves the email once
 MailMessageSchema.index({ resendId: 1 }, { unique: true, partialFilterExpression: { resendId: { $type: 'string' } } });
 MailMessageSchema.index({ threadId: 1, date: 1 });
+MailMessageSchema.index({ direction: 1, threadId: 1 }); // which conversations are in Inbox and Sent
 MailMessageSchema.index({ messageId: 1 });
 
 module.exports = mongoose.model('MailMessage', MailMessageSchema);

@@ -31,6 +31,8 @@ test('request log: what is searched for in the mailbox is hidden, even inside a 
   assert.equal(redactUrl('/mail?box=support&q=ana%40example.com'), '/mail?box=support&q=***');
   assert.equal(redactUrl('/mail?q=ana&box=support'), '/mail?q=***&box=support');
   assert.equal(redactUrl('/login?next=%2Fmail%3Fbox%3Dsupport%26q%3Dana%2540example.com'), '/login?next=%2Fmail%3Fbox%3Dsupport%26q%3D***');
+  assert.equal(redactUrl('/mail?box=support&author=ana%40example.com&since=2026-07-01'), '/mail?box=support&author=***&since=2026-07-01');
+  assert.equal(redactUrl('/mail?recipient=bo%40example.com&box=support'), '/mail?recipient=***&box=support');
   assert.equal(redactUrl('/mail?box=support&quality=high'), '/mail?box=support&quality=high');
 });
 
