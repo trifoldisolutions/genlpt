@@ -300,6 +300,9 @@
         <input type="hidden" name="answering" value="<%= form.answering || '' %>">
         <input type="hidden" name="forwarding" value="<%= form.forwarding || '' %>">
         <input type="hidden" name="d" value="<%= form.d || '' %>">
+        <%# The opening and closing chosen, as plain text (public/js/mail-templates.js) %>
+        <input type="hidden" name="opening" value="<%= form.opening || '' %>">
+        <input type="hidden" name="closing" value="<%= form.closing || '' %>">
         <%# Who it goes out from and the signature that adds, side by side. In Other the address is a field like the ones under it, so it has the row to itself. -mb-px: the column's gap and the space over the letters of To come to a pixel more than the gap above the boxes. %>
         <div class="-mb-px grid gap-2 <%= fixedSender ? 'grid-cols-2' : '' %>">
         <div class="min-w-0 <%= fixedSender ? 'rounded-md border border-zinc-200 px-3 py-2' : '' %>">
@@ -359,7 +362,16 @@
           <input type="hidden" name="format" value="text">
           <textarea name="body" <% if (mode !== 'forward') { %>required<% } %> aria-labelledby="mail-body-label" class="field mt-1 flex-1 resize-none"><%= form.body || '' %></textarea>
           <div id="mail-editor-box" hidden class="mt-1 flex min-h-0 flex-1 flex-col rounded-md border border-zinc-300 bg-surface focus-within:border-cerise-500 focus-within:ring-2 focus-within:ring-cerise-100">
+            <%# What the toolbar's quote button shows (public/js/mail-templates.js): openings over what's written, closings under it, named for whom it's to and who's writing. The one chosen of each sits between its row and the message, apart from it, and goes out with it. %>
+            <%- include('partials/mail-template-row', { kind: 'openings', label: 'Openings', edge: 'border-b' }) %>
+            <%- include('partials/mail-template-piece', { kind: 'opening', label: 'Opening', text: form.opening || '', edge: 'border-b' }) %>
             <div id="mail-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="mail-body-label" class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-base break-words text-zinc-900 outline-none [scrollbar-width:thin] [&_a]:text-cerise-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"></div>
+            <%- include('partials/mail-template-piece', { kind: 'closing', label: 'Closing', text: form.closing || '', edge: 'border-t' }) %>
+            <%- include('partials/mail-template-row', { kind: 'closings', label: 'Closings', edge: 'border-t' }) %>
+            <%# One choice: on one line, all of it in its title. The one chosen stands out. %>
+            <template id="mail-template">
+              <button type="button" aria-pressed="false" class="max-w-72 shrink-0 truncate rounded-md border border-zinc-200 px-2.5 py-1 text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 aria-pressed:border-cerise-500 aria-pressed:bg-cerise-50 aria-pressed:text-cerise-700 pointer-coarse:py-2"></button>
+            </template>
             <%# The files attached (public/js/mail-attachments.js): one row that scrolls sideways, however many there are, so they leave the message its height %>
             <ul id="mail-files" aria-label="Attached files" hidden class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-zinc-200 p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"></ul>
             <template id="mail-file">
@@ -395,6 +407,9 @@
               </button>
               <button type="button" id="mail-attach" class="icon-btn size-8 pointer-coarse:size-10" aria-label="Attach files" title="Attach files: up to <%= filesMax %>, <%= Math.floor(filesMaxBytes / 1024 / 1024) %> MB in all. You can also drop them here.">
                 <iconify-icon icon="boxicons:paperclip" width="18" height="18" aria-hidden="true"></iconify-icon>
+              </button>
+              <button type="button" id="mail-templates-button" aria-expanded="false" aria-controls="mail-openings mail-closings" class="icon-btn ml-auto size-8 pointer-coarse:size-10 aria-expanded:bg-zinc-200 aria-expanded:text-zinc-900" aria-label="Openings and closings" title="Openings and closings">
+                <iconify-icon icon="boxicons:quote-left" width="18" height="18" aria-hidden="true"></iconify-icon>
               </button>
             </div>
           </div>

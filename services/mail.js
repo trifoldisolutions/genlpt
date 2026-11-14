@@ -5,10 +5,12 @@ const MailMessage = require('../models/MailMessage');
 const MailThread = require('../models/MailThread');
 const MailSignature = require('../models/MailSignature');
 const MailDraft = require('../models/MailDraft');
+const User = require('../models/User');
 const { esc } = require('./email/design');
 const { mailboxMessage } = require('./email/templates');
 const { normalizeEmail, emailProblem } = require('../middleware/auth');
-const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, ATTACHMENTS_MAX_BYTES } = require('../config/mail');
+const brand = require('../config/brand');
+const { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, TEMPLATES, ATTACHMENTS_MAX_BYTES } = require('../config/mail');
 
 // The team's mailbox (Admin → Mail, routes/admin.js). Email to any address of the domain is received by Resend, which
 // keeps it 30 days: the app copies each one into mail_messages, grouped in mail_threads, where admins read and answer
@@ -393,8 +395,20 @@ function noteText(html) {
 // The form without its editor sends plain text: the same note, for the email's design
 const plainNote = (text) => text.split('\n').map((line) => `<div>${line ? esc(line) : '<br>'}</div>`).join('');
 
+// An opening or a closing as the form sends it (the quote button's, config/mail.js): plain text, no more than a blank
+// line at a time
+const TEMPLATE_MAX_CHARS = 1000;
+const cleanPiece = (value) => String(value || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, TEMPLATE_MAX_CHARS);
+
+// What was written, with its opening over it and its closing under it, a blank line apart: in plain text and as a note
+const framed = ({ opening, text, note, closing }) => ({
+  text: [opening, text, closing].filter(Boolean).join('\n\n'),
+  note: [opening && plainNote(opening), text && note, closing && plainNote(closing)].filter(Boolean).join('<div><br></div>'),
+});
+
 // The compose, reply or forward form, checked: { value } or { error } (a message for the form). A forward's message is
-// optional: the email forwarded is what it says. value.text: the message in plain text; value.note: in the few tags above.
+// optional: the email forwarded is what it says. An opening and a closing frame a message; they aren't one. value.text:
+// all of it in plain text; value.note: in the few tags above.
 function cleanDraft(body) {
   const from = MAILBOXES.find((m) => m.address === body?.from);
   if (!from) return { error: 'Choose the address to send from.' };
@@ -411,15 +425,16 @@ function cleanDraft(body) {
   const text = (edited === null ? String(body.body || '') : noteText(edited)).replace(/\r\n?/g, '\n').trim();
   const forwarding = isId(body.forwarding) ? body.forwarding : null;
   if (!text && !forwarding) return { error: 'Write a message.' };
-  if (text.length > BODY_MAX_CHARS) return { error: `Keep the message under ${BODY_MAX_CHARS} characters.` };
+  const whole = framed({ opening: cleanPiece(body.opening), text, note: edited ?? plainNote(text), closing: cleanPiece(body.closing) });
+  if (whole.text.length > BODY_MAX_CHARS) return { error: `Keep the message under ${BODY_MAX_CHARS} characters.` };
   return {
     value: {
       from,
       to: to.value,
       cc: cc.value,
       subject,
-      text,
-      note: text ? edited ?? plainNote(text) : '',
+      text: whole.text,
+      note: whole.note,
       answering: !forwarding && isId(body.answering) ? body.answering : null,
       forwarding,
       attachments: forwarding ? [].concat(body.attachments || []).map(String) : [],
@@ -577,12 +592,14 @@ async function saveDraft(body, { by, uploads = [] }) {
     subject: line(body.subject, SUBJECT_MAX_CHARS),
     body: text ? note : '',
     text,
+    opening: cleanPiece(body.opening),
+    closing: cleanPiece(body.closing),
     t: isId(body.t) ? body.t : '',
     answering: isId(body.answering) ? body.answering : '',
     forwarding: isId(body.forwarding) ? body.forwarding : '',
     attachments: [].concat(body.attachments || []).map(String),
   };
-  if (!fields.to && !fields.cc && !fields.subject && !fields.text && !attached.length) return null;
+  if (!fields.to && !fields.cc && !fields.subject && !fields.text && !fields.opening && !fields.closing && !attached.length) return null;
   const files = await Promise.all(attached.map(async (file) => ({
     id: await draftFileStore.put(file),
     filename: file.originalname,
@@ -624,6 +641,47 @@ async function saveSignatures(byAddress, { by = null } = {}) {
     { $set: { text: cleanSignature(byAddress[address]), updatedBy: by } },
     { upsert: true }
   )));
+}
+
+// ---------------------------------------------------------------------------
+// Templates: the openings and closings of what the form's quote button shows (config/mail.js)
+
+// A name as a greeting says it: its first word, capitalized when it came all lowercase ("ana lima" → "Ana"). An address is no name.
+function firstName(name) {
+  const word = String(name || '').replace(/["“”]/g, '').trim().split(/\s+/)[0];
+  if (!word || word.includes('@')) return '';
+  return word === word.toLowerCase() ? word.charAt(0).toUpperCase() + word.slice(1) : word;
+}
+
+// The first name of whom the form's To is for: as typed there ("Ana Lima <ana@example.com>"), else their account's,
+// else the one their emails came with. '' when it names no one, or several people.
+async function recipientName(to) {
+  const typed = String(to || '').split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+  if (typed.length !== 1) return '';
+  const { name, address } = parseAddress(typed[0]);
+  if (firstName(name)) return firstName(name);
+  if (emailProblem(address)) return '';
+  const user = await User.findOne({ email: address }, { name: 1 }).lean();
+  if (firstName(user?.name)) return firstName(user.name);
+  const thread = await MailThread.findOne({ 'counterpart.address': address, 'counterpart.name': { $nin: ['', null] } }, { counterpart: 1 }).sort({ lastAt: -1 }).lean();
+  return firstName(thread?.counterpart?.name);
+}
+
+// A template with its names in: {name} or {name|fallback} for whom it's to, {me} for the admin writing, {team} for the
+// mailbox it's from
+const fillTemplate = (text, { name = '', me = '', team = '' } = {}) => text
+  .replace(/( ?)\{name(?:\|([^}]*))?\}/g, (match, space, fallback) => (name || fallback ? space + (name || fallback) : ''))
+  .replace(/\{me\}/g, me)
+  .replace(/\{team\}/g, team)
+  .trim();
+
+// The quote button's openings and closings for what's in To, signed by the admin writing for the mailbox it's from:
+// its name, or the app's while From is still to choose (Other)
+async function templatesFor(to, { me = '', from = '' } = {}) {
+  const name = await recipientName(to);
+  const team = MAILBOXES.find((m) => m.address === from)?.name || brand.appName;
+  const fill = (text) => fillTemplate(text, { name, me, team });
+  return { openings: TEMPLATES.openings.map(fill), closings: TEMPLATES.closings.map(fill) };
 }
 
 // ---------------------------------------------------------------------------
@@ -875,6 +933,7 @@ module.exports = {
   cleanNote,
   signatures,
   saveSignatures,
+  templatesFor,
   saveDraft,
   listDrafts,
   countDrafts,
@@ -928,4 +987,7 @@ module.exports = {
   searchTextOf,
   searchWords,
   noteText,
+  firstName,
+  recipientName,
+  fillTemplate,
 };

@@ -9,8 +9,9 @@ const MailMessage = require('../models/MailMessage');
 const MailThread = require('../models/MailThread');
 const MailSignature = require('../models/MailSignature');
 const MailDraft = require('../models/MailDraft');
+const User = require('../models/User');
 const templates = require('../services/email/templates');
-const { MAILBOXES } = require('../config/mail');
+const { MAILBOXES, TEMPLATES } = require('../config/mail');
 
 // A webhook signed the way Resend (Svix) signs it
 const SECRET = `whsec_${Buffer.from('a test signing secret').toString('base64')}`;
@@ -374,6 +375,25 @@ test('mail page: the form, filled in, says what it sends', async () => {
   assert.doesNotMatch(forward, /value="gone"\s+checked/);
 });
 
+test('mail page: the quote button at the right end of the message\'s toolbar shows openings over the message and closings under it, in the box', async () => {
+  const html = await drawMail();
+  const start = html.indexOf('id="mail-editor-box"');
+  const box = html.slice(start, html.indexOf('<fieldset', start));
+  assert.match(box, /id="mail-attach"[\s\S]*<button type="button" id="mail-templates-button" aria-expanded="false" aria-controls="mail-openings mail-closings" class="icon-btn ml-auto[^"]*"[^>]*>\s*<iconify-icon icon="boxicons:quote-left"[^<]*<\/iconify-icon>\s*<\/button>(\s*<\/div>){3}\s*$/, 'last in the toolbar, pushed to its end');
+  assert.match(box, /<div id="mail-openings" role="group" aria-label="Openings" hidden class="[^"]*border-b[^"]*">\s*<div data-list class="[^"]*overflow-x-auto[^"]*"><\/div>\s*<\/div>\s*<div id="mail-opening"/, 'over what is written, a row that scrolls sideways, named for screen readers only');
+  assert.match(box, /<\/div>\s*<div id="mail-closings" role="group" aria-label="Closings" hidden class="[^"]*border-t[^"]*">\s*<div data-list class="[^"]*overflow-x-auto/, 'under it');
+  assert.match(box, /<template id="mail-template">\s*<button type="button" aria-pressed="false" class="[^"]*shrink-0 truncate[^"]*aria-pressed:bg-cerise-50/, 'each one on a line; the one chosen stands out');
+  assert.match(box, /id="mail-openings"[\s\S]*?<div id="mail-opening" hidden class="[^"]*border-b[^"]*">[\s\S]*?>Opening<\/span>[\s\S]*?aria-label="Remove the opening"[\s\S]*?<div id="mail-editor"[^>]*><\/div>\s*<div id="mail-closing" hidden class="[^"]*border-t[^"]*">[\s\S]*?>Closing<\/span>[\s\S]*?aria-label="Remove the closing"[\s\S]*?id="mail-closings"/, 'the ones chosen, apart from the message, between it and their rows');
+  assert.match(html, /<input type="hidden" name="opening" value="">\s*<input type="hidden" name="closing" value="">/);
+});
+
+test('mail page: a form that holds an opening and a closing shows them, labeled, apart from the message', async () => {
+  const html = await drawMail({ filled: true, form: { ...EMPTY_FORM, from: 'support@genlpt.com', opening: 'Hi <Ana>,\n\nThanks.', closing: 'Best,\nRosa' } });
+  assert.match(html, /<input type="hidden" name="opening" value="Hi &lt;Ana&gt;,\n\nThanks.">/);
+  assert.match(html, /<div id="mail-opening"  class="[^"]*">[\s\S]*?>Opening<\/span>\s*<p data-text class="[^"]*whitespace-pre-line[^"]*">Hi &lt;Ana&gt;,\n\nThanks.<\/p>/);
+  assert.match(html, /<div id="mail-closing"  class="[^"]*">[\s\S]*?<p data-text[^>]*>Best,\nRosa<\/p>/);
+});
+
 test('mail page: what a forward carried is listed, without a link Resend could not answer', async () => {
   const sent = { ...RECEIVED, _id: 'e'.repeat(24), direction: 'out', attachments: [{ filename: 'report.pdf', size: 12 }] };
   const html = await drawMail({ opened: { ...OPENED, messages: [sent] } });
@@ -413,6 +433,18 @@ test('mail: a draft from the editor keeps its note; one without the script is pl
   assert.match(mail.cleanDraft({ ...draft, format: 'html', body: '<div><br></div><script>x()</script>' }).error, /Write a message/);
   const forward = mail.cleanDraft({ ...draft, format: 'html', body: '<div><br></div>', forwarding: 'a'.repeat(24) }).value;
   assert.equal(forward.note, '', 'nothing written is nothing to sign');
+});
+
+test('mail: the opening and closing chosen frame the message, a blank line apart, as plain text; they are no message on their own', () => {
+  const draft = { from: MAILBOXES[0].address, to: 'ana@example.com', subject: 'Hello', key: 'k'.repeat(22), format: 'html', body: '<div>It\'s <b>fixed</b>.</div>' };
+  const framed = mail.cleanDraft({ ...draft, opening: 'Hi Ana,\r\n\r\nThanks <for> waiting.', closing: 'Best,\nRosa at GenLPT Support' }).value;
+  assert.equal(framed.text, 'Hi Ana,\n\nThanks <for> waiting.\n\nIt\'s fixed.\n\nBest,\nRosa at GenLPT Support');
+  assert.equal(framed.note, '<div>Hi Ana,</div><div><br></div><div>Thanks &lt;for&gt; waiting.</div><div><br></div><div>It\'s <b>fixed</b>.</div><div><br></div><div>Best,</div><div>Rosa at GenLPT Support</div>');
+  assert.equal(mail.cleanDraft({ ...draft, closing: 'Best,\nRosa' }).value.text, 'It\'s fixed.\n\nBest,\nRosa', 'either one alone');
+  assert.match(mail.cleanDraft({ ...draft, body: '<div><br></div>', opening: 'Hi Ana,', closing: 'Best,\nRosa' }).error, /Write a message/);
+  const forward = mail.cleanDraft({ ...draft, body: '', opening: 'Hi Bo,', forwarding: 'a'.repeat(24) }).value;
+  assert.equal(forward.text, 'Hi Bo,', 'a forward\'s message is optional, its opening too');
+  assert.match(mail.cleanDraft({ ...draft, body: `<div>${'x'.repeat(19990)}</div>`, closing: 'Best regards,\nRosa' }).error, /under 20000/, 'counted with what frames it');
 });
 
 test('mail: what goes out has a plain-text and a designed version, signed by the address it is from', async (t) => {
@@ -456,6 +488,58 @@ test('mail: signatures: saving writes every mailbox, trimmed, and says who did',
   assert.deepEqual(writes[0].update.$set, { text: 'Ana\nSupport', updatedBy: 'ops@example.dev' });
   assert.equal(writes[0].options.upsert, true);
   assert.equal(writes[1].update.$set.text, '', 'one left out is empty');
+});
+
+test('mail templates: a name goes in where the template says, else its fallback, else nothing and the space before it', () => {
+  assert.equal(mail.fillTemplate('Hi {name|there},', { name: 'Ana' }), 'Hi Ana,');
+  assert.equal(mail.fillTemplate('Hi {name|there},'), 'Hi there,');
+  assert.equal(mail.fillTemplate('Hello {name},'), 'Hello,');
+  assert.equal(mail.fillTemplate('{name|Friend}, hi'), 'Friend, hi');
+  assert.equal(mail.fillTemplate('Thanks,\n{me} at {team}', { me: 'Rosa Diaz', team: 'GenLPT Support' }), 'Thanks,\nRosa Diaz at GenLPT Support');
+});
+
+test('mail templates: a greeting uses a first name, capitalized only when it came all lowercase; an address is no name', () => {
+  assert.equal(mail.firstName('Ana Lima'), 'Ana');
+  assert.equal(mail.firstName('ana lima'), 'Ana');
+  assert.equal(mail.firstName('McKenzie Ray'), 'McKenzie');
+  assert.equal(mail.firstName('"Ana"'), 'Ana');
+  assert.equal(mail.firstName('ana@example.com'), '');
+  assert.equal(mail.firstName('  '), '');
+});
+
+test('mail templates: the name is as typed in To, else the account\'s, else the one their emails came with; none for several people', async (t) => {
+  const asked = [];
+  const users = { 'ana@example.com': { name: 'Ana Lima' } };
+  const threads = { 'bo@example.com': { counterpart: { name: 'bo', address: 'bo@example.com' } } };
+  t.mock.method(User, 'findOne', (filter) => {
+    asked.push(filter.email);
+    return { lean: async () => users[filter.email] || null };
+  });
+  t.mock.method(MailThread, 'findOne', (filter) => ({ sort: () => ({ lean: async () => threads[filter['counterpart.address']] || null }) }));
+  assert.equal(await mail.recipientName('Rosa Diaz <ana@example.com>'), 'Rosa', 'what is typed comes first');
+  assert.equal(asked.length, 0);
+  assert.equal(await mail.recipientName(' Ana@Example.com '), 'Ana');
+  assert.equal(await mail.recipientName('bo@example.com'), 'Bo');
+  assert.equal(await mail.recipientName('cy@example.com'), '');
+  assert.equal(await mail.recipientName('ana@example.com, bo@example.com'), '', 'several people');
+  assert.equal(await mail.recipientName(''), '');
+  assert.equal(await mail.recipientName('not an address'), '');
+});
+
+test('mail templates: every opening and closing comes filled in, signed by the admin writing for the mailbox it is from', async (t) => {
+  t.mock.method(User, 'findOne', () => ({ lean: async () => ({ name: 'Ana Lima' }) }));
+  const named = await mail.templatesFor('ana@example.com', { me: 'Rosa Diaz', from: MAILBOXES[1].address });
+  const unnamed = await mail.templatesFor('', { me: 'Rosa Diaz', from: MAILBOXES[1].address });
+  for (const lists of [named, unnamed]) {
+    assert.equal(lists.openings.length, TEMPLATES.openings.length);
+    assert.equal(lists.closings.length, TEMPLATES.closings.length);
+    for (const text of [...lists.openings, ...lists.closings]) assert.doesNotMatch(text, /[{}]/, 'every placeholder filled');
+    for (const text of lists.closings) assert.ok(text.endsWith(`\nRosa Diaz at ${MAILBOXES[1].name}`), text);
+  }
+  TEMPLATES.openings.forEach((text, i) => { if (text.includes('{name')) assert.match(named.openings[i], /\bAna\b/); });
+  for (const text of unnamed.openings) assert.doesNotMatch(text, /Ana/);
+  const unchosen = await mail.templatesFor('', { me: 'Rosa Diaz', from: '' });
+  for (const text of unchosen.closings) assert.ok(text.endsWith('\nRosa Diaz at GenLPT'), 'no mailbox chosen yet (Other): the app');
 });
 
 test('mail: a reply and a forward carry their original under the signature, in both versions, and a bare forward has no signature', async (t) => {
@@ -503,6 +587,16 @@ test('mail drafts: anything can be saved unchecked, cleaned of what it shouldn\'
   assert.equal(calls.created.length, 1);
   const plain = await mail.saveDraft({ body: 'Line <b>one</b>\r\nLine two' }, { by: OPS });
   assert.equal(plain.body, '<div>Line &lt;b&gt;one&lt;/b&gt;</div><div>Line two</div>', 'without the editor: plain text, kept as text');
+});
+
+test('mail drafts: the opening and closing chosen are kept apart from the message, and are something to save on their own', async (t) => {
+  const calls = draftStubs(t);
+  await mail.saveDraft({ format: 'html', body: '<div>Done.</div>', opening: '  Hi Ana,\r\n\r\n\r\nThanks. ', closing: 'Best,\r\nRosa' }, { by: OPS });
+  assert.equal(calls.created[0].body, '<div>Done.</div>');
+  assert.equal(calls.created[0].text, 'Done.', 'the list shows what was written');
+  assert.equal(calls.created[0].opening, 'Hi Ana,\n\nThanks.');
+  assert.equal(calls.created[0].closing, 'Best,\nRosa');
+  assert.ok(await mail.saveDraft({ closing: 'Best,\nRosa' }, { by: OPS }));
 });
 
 test('mail drafts: a draft\'s files are kept apart, and an empty one isn\'t; too many bytes or too long a message isn\'t saved', async (t) => {

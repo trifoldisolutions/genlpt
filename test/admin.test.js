@@ -288,11 +288,13 @@ test('mail: a form sent back with a problem comes back as it was typed, on the t
   const { thread, received } = stubMail(t);
   await withAdminApp(async (get) => {
     const send = (fields) => get('/mail/send', { method: 'POST', headers: { ...signedIn().headers, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields) });
-    const bad = await send({ box: 'support', from: 'support@genlpt.com', to: 'nope', subject: 'Re: Billing', body: 'My answer', t: thread._id, answering: received._id, forwarding: '', key: 'k'.repeat(22) });
+    const bad = await send({ box: 'support', from: 'support@genlpt.com', to: 'nope', subject: 'Re: Billing', body: 'My answer', opening: 'Hi Ana,', closing: 'Best,\nOps', t: thread._id, answering: received._id, forwarding: '', key: 'k'.repeat(22) });
     assert.equal(bad.status, 400);
     const html = await bad.text();
     assert.match(html, /“nope” isn’t a valid email address/);
     assert.match(html, /My answer<\/textarea>/);
+    assert.match(html, /name="opening" value="Hi Ana,"/);
+    assert.match(html, /name="closing" value="Best,\r?\nOps"/);
     assert.match(html, /data-filled="true"/);
     assert.match(html, new RegExp(`name="t" value="${thread._id}"`));
     assert.match(html, /Help/, 'the email stays open');
@@ -488,6 +490,26 @@ test('mail signatures: the page lists each mailbox, saves them, and refuses one 
     assert.equal(saved.length, 1);
     const toasted = await (await get('/mail/signatures?done=saved', signedIn())).text();
     assert.match(toasted, /data-flash="ok">Your signatures were saved/);
+  });
+});
+
+test('mail templates: the quote button\'s openings and closings, for whom To is for, signed by the admin for the mailbox; not cached, admins only', async (t) => {
+  const mail = require('../services/mail');
+  const asked = [];
+  t.mock.method(mail, 'templatesFor', async (to, options) => {
+    asked.push({ to, options });
+    return { openings: ['Hi Ana,'], closings: ['Thanks,\nOps'] };
+  });
+  await withAdminApp(async (get) => {
+    const res = await get(`/mail/templates?${new URLSearchParams({ to: 'Ana <ana@example.com>', from: 'support@genlpt.com' })}`, signedIn());
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store', 'a name is personal');
+    assert.deepEqual(await res.json(), { openings: ['Hi Ana,'], closings: ['Thanks,\nOps'] });
+    assert.deepEqual(asked[0], { to: 'Ana <ana@example.com>', options: { me: 'Ops', from: 'support@genlpt.com' } });
+    await get('/mail/templates?to=a@example.com&to=b@example.com', signedIn());
+    assert.deepEqual(asked[1], { to: '', options: { me: 'Ops', from: '' } }, 'one To, as the form sends it; no From yet');
+    assert.equal((await get('/mail/templates?to=a@example.com')).status, 302, 'signed out: to the sign-in');
+    assert.equal(asked.length, 2);
   });
 });
 

@@ -65,7 +65,7 @@ const newKey = () => crypto.randomBytes(16).toString('base64url');
 const choicesOf = (message) => (message?.attachments || []).filter((a) => a.id).map((a) => ({ id: a.id, filename: a.filename || 'Attachment', size: mail.fileSize(a.size) }));
 
 // The form before anything fills it in: empty. views/admin/mail.ejs shows a mailbox's address as what it goes out from.
-const emptyDraft = () => ({ from: '', to: '', cc: '', subject: '', body: '', t: '', answering: '', forwarding: '', attachments: [], choices: [], d: '', savedFiles: [], key: newKey() });
+const emptyDraft = () => ({ from: '', to: '', cc: '', subject: '', body: '', opening: '', closing: '', t: '', answering: '', forwarding: '', attachments: [], choices: [], d: '', savedFiles: [], key: newKey() });
 
 // The form's starting values. A reply: from the mailbox the thread is at, to whom it's with, answering the latest
 // email they sent. A forward: from that mailbox, to whomever's typed, with all of the email's attachments ticked. A new
@@ -220,7 +220,7 @@ router.post('/mail/drafts', sameOrigin, acceptFiles, async (req, res) => {
   const body = req.body || {};
   const box = mail.boxOf(body.box);
   const folder = mail.folderOf(body.folder);
-  const draft = { from: body.from, to: body.to, cc: body.cc, subject: body.subject, body: body.format === 'html' ? mail.cleanNote(body.body) : body.body, t: body.t, answering: body.answering, forwarding: body.forwarding, attachments: [].concat(body.attachments || []), d: body.d, key: body.key };
+  const draft = { from: body.from, to: body.to, cc: body.cc, subject: body.subject, body: body.format === 'html' ? mail.cleanNote(body.body) : body.body, opening: body.opening, closing: body.closing, t: body.t, answering: body.answering, forwarding: body.forwarding, attachments: [].concat(body.attachments || []), d: body.d, key: body.key };
   const filters = mail.cleanFilters(body);
   const view = { admin: req.admin, boxKey: box.key, folderKey: folder.key, filters, threadId: body.t || null, compose: !body.t, reply: !!body.t && !body.forwarding, forward: body.forwarding ? String(body.forwarding) : null, draft };
   if (req.fileProblem) return mailPage(res, { ...view, formError: req.fileProblem.replace('Not sent', 'Not saved'), status: 413 });
@@ -281,7 +281,7 @@ router.post('/mail/send', sameOrigin, acceptFiles, async (req, res) => {
   const view = { admin: req.admin, boxKey: body.box, folderKey: body.folder, filters, threadId: body.t || null, compose: !body.t, reply: !!body.t && !body.forwarding, forward: body.forwarding ? String(body.forwarding) : null, q };
   // Sent back as cleaned: the editor picks it up from there
   const typed = body.format === 'html' ? mail.cleanNote(body.body) : body.body;
-  const draft = { from: body.from, to: body.to, cc: body.cc, subject: body.subject, body: typed, t: body.t, answering: body.answering, forwarding: body.forwarding, attachments: [].concat(body.attachments || []), d: body.d, key: body.key };
+  const draft = { from: body.from, to: body.to, cc: body.cc, subject: body.subject, body: typed, opening: body.opening, closing: body.closing, t: body.t, answering: body.answering, forwarding: body.forwarding, attachments: [].concat(body.attachments || []), d: body.d, key: body.key };
   if (req.fileProblem) return mailPage(res, { ...view, draft, formError: req.fileProblem, status: 413 });
   const checked = mail.cleanDraft(body);
   if (checked.error) return mailPage(res, { ...view, draft, formError: checked.error, status: 400 });
@@ -389,6 +389,14 @@ router.post('/mail/signatures', sameOrigin, async (req, res) => {
   res.redirect('/mail/signatures?done=saved');
 });
 
+// What the form's quote button shows (public/js/mail-templates.js): its openings and closings, with the name of whom To
+// is for, the admin's own and the mailbox's it's from. A name is personal: not kept in the browser's cache.
+router.get('/mail/templates', async (req, res) => {
+  const text = (value) => (typeof value === 'string' ? value.slice(0, 2000) : '');
+  res.set('Cache-Control', 'no-store');
+  res.json(await mail.templatesFor(text(req.query.to), { me: req.admin.name, from: text(req.query.from) }));
+});
+
 // A received email's attachment: off to Resend's download link
 router.get('/mail/messages/:id/attachments/:attachment', async (req, res) => {
   let url;
@@ -412,6 +420,7 @@ router.routes = [
   { method: 'POST', path: '/mail/send', label: 'Mail: send a reply or a new email' },
   { method: 'POST', path: '/mail/sync', label: 'Mail: check Resend for new mail' },
   { method: 'GET', path: '/mail/signatures', label: 'Mail: each mailbox’s signature' },
+  { method: 'GET', path: '/mail/templates', label: 'Mail: the form’s openings and closings, named' },
 ];
 
 module.exports = router;

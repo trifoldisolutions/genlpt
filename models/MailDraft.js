@@ -24,6 +24,8 @@ const MailDraftSchema = new Schema(
     subject: String,
     body: String, // the message, in the few tags cleanNote leaves
     text: String, // and in plain text, for the list
+    opening: String, // what goes over it and under it, as chosen (plain text): config/mail.js TEMPLATES
+    closing: String,
     t: String, // the thread it answers or forwards from
     answering: String,
     forwarding: String,

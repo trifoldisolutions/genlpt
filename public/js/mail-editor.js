@@ -69,7 +69,14 @@ export function messageEditor({ textarea, format, box, editor, onFiles, onChange
     });
     linkButton.setAttribute('aria-pressed', String(!!linkAt(getSelection().anchorNode)));
   }
-  document.addEventListener('selectionchange', () => { if (inEditor(getSelection().anchorNode)) showState(); });
+  // Where the caret was last in it, to go back to (resume)
+  let lastRange = null;
+  document.addEventListener('selectionchange', () => {
+    const selection = getSelection();
+    if (!inEditor(selection.anchorNode)) return;
+    showState();
+    if (selection.rangeCount) lastRange = selection.getRangeAt(0).cloneRange();
+  });
 
   // The buttons don't take the focus, so what's selected stays selected
   box.querySelectorAll('[data-format], [data-link]').forEach((button) => {
@@ -179,5 +186,16 @@ export function messageEditor({ textarea, format, box, editor, onFiles, onChange
     document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
   });
 
-  return { set, focus, isEmpty };
+  // Back to writing where the caret was, after the quote button's rows (mail-templates.js); at the end when what it was
+  // in is gone
+  function resume() {
+    if (document.activeElement === editor) return;
+    editor.focus();
+    if (!lastRange || !editor.contains(lastRange.startContainer)) return caretAtEnd();
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(lastRange);
+  }
+
+  return { set, focus, isEmpty, resume };
 }

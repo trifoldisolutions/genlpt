@@ -7,6 +7,7 @@
 import { customSelect } from './select.js';
 import { attachedFiles, forgetAllFiles, forgetFiles } from './mail-attachments.js';
 import { messageEditor } from './mail-editor.js';
+import { templateRows } from './mail-templates.js';
 
 const KEY = 'admin.mail.draft';
 const ASK_MS = 4000;
@@ -25,7 +26,7 @@ const form = document.getElementById('mail-form');
 if (form) {
   const chooser = document.getElementById('mail-from'); // Other only: a mailbox sends from its own address
   const picker = chooser && customSelect(chooser);
-  const FIELDS = ['to', 'cc', 'subject', 'body', 't', 'answering', 'forwarding', 'd', 'key', ...(chooser ? ['from'] : [])];
+  const FIELDS = ['to', 'cc', 'subject', 'body', 'opening', 'closing', 't', 'answering', 'forwarding', 'd', 'key', ...(chooser ? ['from'] : [])];
   const columns = document.getElementById('mail-columns');
   const column = document.getElementById('mail-writing');
   const rows = document.getElementById('mail-attachment-choices');
@@ -68,7 +69,7 @@ if (form) {
   // anything at all to save.
   const send = form.querySelector('button[type="submit"]:not([data-save])');
   const saveDraft = form.querySelector('button[data-save]');
-  const hasWork = () => !editor.isEmpty() || files.count() > 0;
+  const hasWork = () => !editor.isEmpty() || files.count() > 0 || !!field('opening').value || !!field('closing').value;
   function showSendState() {
     const waiting = editor.isEmpty() && !field('forwarding').value;
     send.disabled = waiting;
@@ -103,6 +104,16 @@ if (form) {
       showSendState();
       stopAsking();
     },
+  });
+
+  const templates = templateRows({
+    form,
+    button: document.getElementById('mail-templates-button'),
+    chip: document.getElementById('mail-template'),
+    to: field('to'),
+    from: field('from'),
+    editor,
+    onProblem: showProblem,
   });
 
   // The signature the address adds
@@ -149,6 +160,7 @@ if (form) {
     rows.closest('fieldset').hidden = !choices.length;
     const mode = draft.forwarding ? 'forward' : draft.answering ? 'reply' : 'new';
     form.querySelectorAll('[data-when]').forEach((el) => { el.hidden = el.dataset.when !== mode; });
+    templates.refresh(); // named for whom it's to now
     clearProblem();
   }
 
@@ -179,6 +191,7 @@ if (form) {
   if (form.dataset.filled === 'true') {
     const problem = !!form.querySelector('[role="alert"]');
     editor.set(field('body').value || draft?.body);
+    templates.refresh();
     save();
     if (!problem && field('to').value) editor.focus();
   } else if (draft) {
@@ -242,7 +255,7 @@ if (form) {
       columns.dataset.writing = 'false';
       if (savedId) deleteSaved(savedId);
     } else {
-      fill({ ...JSON.parse(link.dataset.draft), body: field('body').value, d: field('d').value });
+      fill({ ...JSON.parse(link.dataset.draft), body: field('body').value, opening: field('opening').value, closing: field('closing').value, d: field('d').value });
       save();
       columns.dataset.writing = 'true';
       (field('to').value ? editor : field('to')).focus();

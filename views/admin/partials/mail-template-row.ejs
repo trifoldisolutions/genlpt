@@ -1,0 +1,4 @@
+<%# A row of openings or closings in the message box (views/admin/mail.ejs): shown by the toolbar's quote button and filled in by public/js/mail-templates.js. Its choices scroll sideways, with no scrollbar, like the files attached; where it sits says what they are, so its name is for screen readers only. edge: the border between it and what's written. %>
+<div id="mail-<%= kind %>" role="group" aria-label="<%= label %>" hidden class="shrink-0 <%= edge %> border-zinc-200">
+  <div data-list class="flex gap-1.5 overflow-x-auto p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"></div>
+</div>

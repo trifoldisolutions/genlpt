@@ -21,9 +21,30 @@ const BODY_MAX_CHARS = 20000;
 const RECIPIENTS_MAX = 20;
 const SIGNATURE_MAX_CHARS = 500;
 
+// What the form's quote button adds to a message (public/js/mail-templates.js): an opening at its top, a closing at its end.
+// {name}: the first name of whom it's to (services/mail.js, templates); with no name known, or several people, it
+// leaves the space before it out, or says what follows its | instead. {me}: the name of the admin writing
+// (ADMIN_PROFILES). {team}: the name of the mailbox it goes out from (above), or the app's while none is chosen.
+// \n starts a new line.
+const TEMPLATES = {
+  openings: [
+    'Hi {name|there},',
+    'Hello {name},',
+    'Hi {name|there},\n\nThanks for reaching out.',
+    'Hi {name|there},\n\nThanks for your patience while we looked into this.',
+    'Hi {name|there},\n\nSorry for the trouble, and thanks for letting us know.',
+  ],
+  closings: [
+    'Best regards,\n{me} at {team}',
+    'Thanks,\n{me} at {team}',
+    'Let me know if there’s anything else I can help with.\n\nBest,\n{me} at {team}',
+    'If you have any other questions, just reply to this email.\n\nKind regards,\n{me} at {team}',
+  ],
+};
+
 // What an email can carry, files attached and forwarded together: Resend takes 40 MB an email, counted after Base64,
 // which adds a third
 const ATTACHMENTS_MAX_BYTES = 29 * 1024 * 1024;
 const ATTACHMENTS_MAX_FILES = 10; // attached to one email, from the form
 
-module.exports = { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, SIGNATURE_MAX_CHARS, ATTACHMENTS_MAX_BYTES, ATTACHMENTS_MAX_FILES };
+module.exports = { MAILBOXES, TIME_ZONE, HTML_MAX_CHARS, TEXT_MAX_CHARS, BODY_MAX_CHARS, RECIPIENTS_MAX, SIGNATURE_MAX_CHARS, TEMPLATES, ATTACHMENTS_MAX_BYTES, ATTACHMENTS_MAX_FILES };
